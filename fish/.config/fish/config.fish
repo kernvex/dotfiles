@@ -84,6 +84,33 @@ function llll --wraps=ls --wraps=eza --description 'List contents of directory u
   eza --tree --level=3 -a --long --header --accessed --group-directories-first $argv
 end
 
+# CPU flame graph of a running process via macOS `sample` + FlameGraph (brew install flamegraph).
+function flamegraph-pid --description 'CPU flame graph of a running process: flamegraph-pid <pid> [seconds=5]'
+  if test -z "$argv[1]"
+    echo "Usage: flamegraph-pid <pid> [seconds=5]   (find pids with: pgrep <name>  or  htop)"
+    return 1
+  end
+  if not command -v flamegraph.pl >/dev/null 2>&1
+    echo "flamegraph not installed — run: brew install flamegraph"
+    return 1
+  end
+  set -l pid $argv[1]
+  set -l secs 5
+  test -n "$argv[2]"; and set secs $argv[2]
+  set -l raw (mktemp -t flamegraph_sample)
+  set -l svg /tmp/flamegraph-$pid-(date +%Y%m%d-%H%M%S).svg
+  echo "Sampling PID $pid for $secs s..."
+  if not sample $pid $secs -f $raw >/dev/null 2>&1
+    echo "sample failed — is PID $pid alive? (ps -p $pid)"
+    rm -f $raw
+    return 1
+  end
+  stackcollapse-sample.awk $raw | flamegraph.pl --title "PID $pid ($secs s)" >$svg
+  rm -f $raw
+  echo "Flame graph -> $svg"
+  open $svg
+end
+
 bind \cf 'tmux-sessionizer; commandline -f repaint'
 bind -M insert \cf 'tmux-sessionizer; commandline -f repaint'
 
