@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Pull runtime changes to ~/.claude/settings.json back into the dotfiles repo,
+# then show the diff so you can review and commit.
+#
+# Counterpart to ./install, which copies the repo's settings.json ONTO the
+# machine. settings.json is copy-managed (not symlinked) because Claude Code
+# atomically rewrites it — see claude/README.md.
+set -euo pipefail
+
+DOTFILES="${DOTFILES:-$HOME/6eniu5/dotfiles}"
+src="$HOME/.claude/settings.json"
+dst="$DOTFILES/claude/.claude/settings.json"
+
+[ -f "$src" ] || { echo "no $src to sync" >&2; exit 1; }
+mkdir -p "$(dirname "$dst")"
+
+if cmp -s "$src" "$dst"; then
+  echo "settings.json already in sync with the repo — nothing to do."
+  exit 0
+fi
+
+cp "$src" "$dst"
+echo "synced: $src -> $dst"
+echo
+git -C "$DOTFILES" --no-pager diff -- claude/.claude/settings.json || true
+echo
+echo "Review the diff, then commit:"
+echo "  git -C \"$DOTFILES\" add claude/.claude/settings.json && git -C \"$DOTFILES\" commit"

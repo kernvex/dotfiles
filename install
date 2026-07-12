@@ -45,6 +45,10 @@ for pkg in "${PACKAGES[@]}"; do
   while IFS= read -r -d '' f; do
     rel="${f#"$pkg"/}"
     tgt="$TARGET/$rel"
+    # settings.json is copy-managed (see the claude block after the loop), never
+    # stowed — it's always a real file, so this pass would move it aside on EVERY
+    # install and litter ~/.claude with identical .bak copies. Leave it alone.
+    [ "$pkg/$rel" = "claude/.claude/settings.json" ] && continue
     [ -e "$tgt" ] && [ ! -L "$tgt" ] || continue
     tgtdir="$(cd "$(dirname "$tgt")" 2>/dev/null && pwd -P)" || continue
     case "$tgtdir/" in "$DOTFILES_DIR"/*) continue ;; esac
@@ -54,5 +58,24 @@ for pkg in "${PACKAGES[@]}"; do
   stow --no-folding --target="$TARGET" "$pkg"
   echo "stowed: $pkg"
 done
+
+# Claude Code's settings.json is COPY-managed, not stowed. Claude atomically
+# rewrites it (temp + rename) on /model, /config, plugin toggles, etc., which
+# replaces a stow symlink with a regular file and detaches it — and symlinked
+# settings also trip permission bugs (anthropics/claude-code#3575, #40857). The
+# claude package's .stow-local-ignore keeps stow from linking settings.json;
+# statusline-pace.py IS stowed normally by the loop above. Repo is the source of
+# truth here; `claude-settings-sync` pushes local changes back the other way.
+claude_src="claude/.claude/settings.json"
+claude_dst="$TARGET/.claude/settings.json"
+if [ -f "$claude_src" ]; then
+  mkdir -p "$TARGET/.claude"
+  if [ -e "$claude_dst" ] && ! cmp -s "$claude_src" "$claude_dst"; then
+    mv "$claude_dst" "$claude_dst.bak.$ts"
+    echo "backed up existing $claude_dst -> $claude_dst.bak.$ts"
+  fi
+  cp "$claude_src" "$claude_dst"
+  echo "copied: $claude_src -> $claude_dst"
+fi
 
 echo "Done. Dotfiles stowed into $TARGET."

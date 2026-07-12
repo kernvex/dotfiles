@@ -1,0 +1,12 @@
+# stow should link ONLY statusline-pace.py from this package.
+#
+# settings.json is COPY-managed by ./install, not stowed: Claude Code atomically
+# rewrites ~/.claude/settings.json (temp file + rename) on /model, /config, etc.,
+# which would detach a stow symlink — and symlinked settings also trip permission-
+# recognition failures + slow startups (anthropics/claude-code#3575, #40857).
+# README.md is documentation.
+#
+# NOTE: defining this file replaces stow's built-in default ignore list, so the
+# README pattern must be repeated here.
+settings\.json
+README.*
