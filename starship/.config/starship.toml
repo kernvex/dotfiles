@@ -1,0 +1,69 @@
+add_newline = false
+
+[character]
+vicmd_symbol = "[█](bold yellow) "
+success_symbol = "[█](bold #CC59B0) "
+error_symbol = "[█](bold red) "
+format = " -> "
+
+[username]
+style_user = "fg:#CC99CC"
+style_root = "white"
+format = " [$user]($style)[@](bold yellow)"
+disabled = false
+show_always = true
+
+[hostname]
+ssh_only = false
+format =  "[$hostname](bold fg:#CC59B0): "
+disabled = false
+
+[directory]
+read_only = "🔒"
+read_only_style= "bold white"
+style = "fg:#A7F3E4"
+
+[docker_context]
+format = "via [🐋 $context](blue bold)"
+
+[cmd_duration]
+min_time = 50
+format = "⌛️[$duration](bold yellow)"
+
+[aws]
+disabled = true
+
+# Git
+[git_branch]
+style = "fg:white bg:black"
+
+#[git_status]
+#style = "fg:#E29191"
+[git_status]
+conflicted = " 🏳 "
+ahead = " 🏎  💨 "
+behind = " 😰 "
+diverged = " 😵 "
+untracked = " 🤷 "
+stashed = " 📦 "
+modified = " 📝 "
+staged = '[++\($count\)](green)'
+renamed = " 👅 "
+deleted = " 🗑  "
+
+# Language Environments
+[package]
+style = "bold fg:#5E5E5E"
+
+[python]
+style = "bold fg:#5E5E5E"
+symbol = "[](bold yellow) "
+
+[nodejs]
+style = "bold fg:#5E5E5E"
+symbol = "[⬢](bold green) "
+
+[sudo]
+style = "bold green"
+symbol = "👩💻 "
+disabled = false

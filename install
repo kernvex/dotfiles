@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Self-installing dotfiles. Stows each package into $HOME with GNU stow,
+# --no-folding so target directories stay real (nothing folds back into this repo).
+# Portable: `git clone … && ./install` works standalone, no esetup required.
+set -euo pipefail
+
+DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DOTFILES_DIR"
+
+TARGET="${HOME}"
+# Stow packages (symlinked into $HOME). Non-packages (keyboard/, raycast/) are applied
+# by esetup, not stowed, so they are deliberately absent from this list.
+PACKAGES=(fish starship wezterm tmux tmux-sessionizer-config bin atuin git htop nvim)
+
+if ! command -v stow >/dev/null 2>&1; then
+  echo "ERROR: GNU stow is required (brew install stow), then re-run ./install." >&2
+  exit 1
+fi
+
+# nvim config + tmux-sessionizer tool are submodules — make sure they are present.
+if [ -f .gitmodules ]; then
+  git submodule update --init --recursive \
+    || echo "WARN: submodule update failed (SSH/network); nvim/tmux-sessionizer may be incomplete." >&2
+fi
+
+# The tmux-sessionizer tool lives in its own submodule at the repo root; bin/ links to it.
+if [ -e tmux-sessionizer/tmux-sessionizer ]; then
+  ln -sf ../../../tmux-sessionizer/tmux-sessionizer bin/.local/bin/tmux-sessionizer
+fi
+
+ts="$(date +%s)"
+for pkg in "${PACKAGES[@]}"; do
+  [ -d "$pkg" ] || { echo "skip (missing): $pkg"; continue; }
+  # A real (non-symlink) file already at the target would make stow abort; move it aside.
+  while IFS= read -r -d '' f; do
+    rel="${f#"$pkg"/}"
+    tgt="$TARGET/$rel"
+    if [ -e "$tgt" ] && [ ! -L "$tgt" ]; then
+      mv "$tgt" "$tgt.bak.$ts"
+      echo "backed up existing $tgt -> $tgt.bak.$ts"
+    fi
+  done < <(find "$pkg" -type f -print0)
+  stow --no-folding --restow --target="$TARGET" "$pkg"
+  echo "stowed: $pkg"
+done
+
+echo "Done. Dotfiles stowed into $TARGET."
