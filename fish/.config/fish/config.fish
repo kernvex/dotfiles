@@ -141,7 +141,7 @@ if command -v fd >/dev/null 2>&1
   set -gx FZF_CTRL_T_COMMAND "$FZF_DEFAULT_COMMAND"
   set -gx FZF_ALT_C_COMMAND 'fd --type d --hidden --follow --exclude .git'
 end
-set -gx FZF_DEFAULT_OPTS '--height 60% --layout=reverse --border --info=inline'
+set -gx FZF_DEFAULT_OPTS '--height 80% --layout=reverse --border --info=inline'
 command -v bat >/dev/null 2>&1; and set -gx FZF_CTRL_T_OPTS "--preview 'bat --style=numbers --color=always --line-range :200 {}' --bind 'ctrl-/:toggle-preview'"
 command -v eza >/dev/null 2>&1; and set -gx FZF_ALT_C_OPTS "--preview 'eza --tree --level=2 --color=always --icons=always {}' --bind 'ctrl-/:toggle-preview'"
 command -v fzf >/dev/null 2>&1; and fzf --fish | source
