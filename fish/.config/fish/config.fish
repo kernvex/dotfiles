@@ -1,6 +1,9 @@
 set -gx XDG_CONFIG_HOME $HOME/.config
 set -gx EDITOR nvim
 set -gx GIT_EDITOR nvim
+# Pin the locale so Python/Perl/etc. don't emit "setlocale" warnings when the
+# terminal forwards an unset or exotic LC_*.
+set -gx LANG en_US.UTF-8
 set -gx DOTFILES $HOME/6eniu5/dotfiles
 set -q CU_OWNER; or set -gx CU_OWNER $USER
 set -gx PNPM_HOME $HOME/Library/pnpm
@@ -95,8 +98,13 @@ bind -M insert \es 'tmux-sessionizer -s 3; commandline -f repaint'
 
 test -f "$HOME/.cargo/env.fish"; and source "$HOME/.cargo/env.fish"
 
-command -v fnm >/dev/null 2>&1; and fnm env --use-on-cd --shell fish | source
-command -v mise >/dev/null 2>&1; and mise activate fish | source
+# fnm and mise both manage Node; activating both lets mise (loaded second) shadow
+# fnm's shims. Prefer fnm (what esetup installs); fall back to mise only if fnm is absent.
+if command -v fnm >/dev/null 2>&1
+  fnm env --use-on-cd --shell fish | source
+else if command -v mise >/dev/null 2>&1
+  mise activate fish | source
+end
 # fzf shell integration (Ctrl-T files, Alt-C cd). Loaded before atuin so atuin keeps Ctrl-R.
 command -v fzf >/dev/null 2>&1; and fzf --fish | source
 command -v atuin >/dev/null 2>&1; and atuin init fish | source
