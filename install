@@ -29,18 +29,29 @@ if [ -e tmux-sessionizer/tmux-sessionizer ]; then
 fi
 
 ts="$(date +%s)"
+
+# First unstow every package. This removes any pre-existing stow symlinks — crucially
+# any FOLDED directory symlink (e.g. ~/.config/fish -> this repo). Without this, the
+# backup pass below would follow such a symlink and rename our OWN repo files.
+for pkg in "${PACKAGES[@]}"; do
+  [ -d "$pkg" ] && stow -D --target="$TARGET" "$pkg" 2>/dev/null || true
+done
+
 for pkg in "${PACKAGES[@]}"; do
   [ -d "$pkg" ] || { echo "skip (missing): $pkg"; continue; }
-  # A real (non-symlink) file already at the target would make stow abort; move it aside.
+  # A real (non-symlink) file still at the target would make stow abort; move it aside.
+  # Guard: never touch a path whose real location is inside this repo (a file reached
+  # through a folded symlink we somehow missed) — that would corrupt the source.
   while IFS= read -r -d '' f; do
     rel="${f#"$pkg"/}"
     tgt="$TARGET/$rel"
-    if [ -e "$tgt" ] && [ ! -L "$tgt" ]; then
-      mv "$tgt" "$tgt.bak.$ts"
-      echo "backed up existing $tgt -> $tgt.bak.$ts"
-    fi
+    [ -e "$tgt" ] && [ ! -L "$tgt" ] || continue
+    tgtdir="$(cd "$(dirname "$tgt")" 2>/dev/null && pwd -P)" || continue
+    case "$tgtdir/" in "$DOTFILES_DIR"/*) continue ;; esac
+    mv "$tgt" "$tgt.bak.$ts"
+    echo "backed up existing $tgt -> $tgt.bak.$ts"
   done < <(find "$pkg" -type f -print0)
-  stow --no-folding --restow --target="$TARGET" "$pkg"
+  stow --no-folding --target="$TARGET" "$pkg"
   echo "stowed: $pkg"
 done
 
