@@ -136,13 +136,14 @@ end
 # fzf: use fd as the walker (honors .gitignore, includes hidden, skips .git) and add
 # previews — Ctrl-T shows the file via bat, Alt-C shows a dir tree via eza. Ctrl-/ toggles
 # the preview pane. Env vars are read when the widget runs, so order vs `fzf --fish` is fine.
+# Ctrl-T stays at --max-depth 1 (current folder only), not the full recursive tree.
 if command -v fd >/dev/null 2>&1
   set -gx FZF_DEFAULT_COMMAND 'fd --type f --hidden --follow --exclude .git'
-  set -gx FZF_CTRL_T_COMMAND "$FZF_DEFAULT_COMMAND"
+  set -gx FZF_CTRL_T_COMMAND 'fd --max-depth 1 --hidden --follow --exclude .git'
   set -gx FZF_ALT_C_COMMAND 'fd --type d --hidden --follow --exclude .git'
 end
 set -gx FZF_DEFAULT_OPTS '--height 80% --layout=reverse --border --info=inline'
-command -v bat >/dev/null 2>&1; and set -gx FZF_CTRL_T_OPTS "--preview 'bat --style=numbers --color=always --line-range :200 {}' --bind 'ctrl-/:toggle-preview'"
+command -v bat >/dev/null 2>&1; and set -gx FZF_CTRL_T_OPTS "--preview 'test -d {} && eza --tree --level=2 --color=always --icons=always {} || bat --style=numbers --color=always --line-range :200 {}' --bind 'ctrl-/:toggle-preview'"
 command -v eza >/dev/null 2>&1; and set -gx FZF_ALT_C_OPTS "--preview 'eza --tree --level=2 --color=always --icons=always {}' --bind 'ctrl-/:toggle-preview'"
 command -v fzf >/dev/null 2>&1; and fzf --fish | source
 command -v atuin >/dev/null 2>&1; and atuin init fish | source
