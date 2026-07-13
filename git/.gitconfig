@@ -18,3 +18,9 @@
 	pr = pull --rebase
 [push]
 	autoSetupRemote = true
+# Machine/identity-local git config (per-company includeIf blocks, etc.). Kept
+# OUT of this public repo. Missing file = silently ignored. Placed last so its
+# includeIf'd identities override the personal [user] above for their folders.
+# See the `ssh` repo's ADDING_AN_IDENTITY.md.
+[include]
+	path = ~/.config/git/local.inc
