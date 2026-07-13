@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Pull runtime changes to the Habits vault's .obsidian config back into the
+# dotfiles repo, then show the diff so you can review and commit.
+#
+# Counterpart to ./install, which rsyncs the repo's obsidian config ONTO the
+# vault. Config is copy-managed (not symlinked) because the vault lives in the
+# iCloud container and Obsidian rewrites its own JSON — see obsidian/README.md.
+#
+# Syncs CONFIG JSON only — never plugin binaries (pinned) or the
+# generator-owned types.json / runtime workspace files.
+set -euo pipefail
+
+DOTFILES="${DOTFILES:-$HOME/6eniu5/dotfiles}"
+VAULT="${OBSIDIAN_HABITS_VAULT:-$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/Habits}"
+src="$VAULT/.obsidian"
+dst="$DOTFILES/obsidian/vault-obsidian"
+
+[ -d "$src" ] || { echo "no $src to sync (is the vault set up?)" >&2; exit 1; }
+
+files=(app.json appearance.json core-plugins.json community-plugins.json daily-notes.json templates.json)
+changed=0
+for f in "${files[@]}"; do
+  if [ -f "$src/$f" ] && ! cmp -s "$src/$f" "$dst/$f"; then
+    cp "$src/$f" "$dst/$f"
+    echo "synced: $f"
+    changed=1
+  fi
+done
+
+if [ "$changed" -eq 0 ]; then
+  echo "obsidian config already in sync with the repo — nothing to do."
+  exit 0
+fi
+
+echo
+git -C "$DOTFILES" --no-pager diff -- obsidian/vault-obsidian || true
+echo
+echo "Review the diff, then commit:"
+echo "  git -C \"$DOTFILES\" add obsidian/vault-obsidian && git -C \"$DOTFILES\" commit"

@@ -1,0 +1,6 @@
+# The obsidian package is COPY-managed by ./install (rsync into the iCloud
+# vault's .obsidian/), never stowed — the vault is in the iCloud container where
+# symlinks misbehave, and Obsidian rewrites its own JSON at runtime. This package
+# is also absent from install's PACKAGES list, so the stow loop never sees it;
+# this file is a belt-and-suspenders guard in case it is ever added.
+.*

@@ -78,4 +78,24 @@ if [ -f "$claude_src" ]; then
   echo "copied: $claude_src -> $claude_dst"
 fi
 
+# Obsidian: the Habits vault's .obsidian config + pinned community-plugin
+# binaries are COPY-managed (not stowed). The vault lives in the iCloud
+# container, where symlinks misbehave, and Obsidian rewrites its own JSON at
+# runtime — same reasons as claude/settings.json. types.json is owned by the
+# obsidian-habit-tracker generator and is deliberately NOT shipped here, so the
+# rsync (no --delete) leaves it and workspace.json untouched. See obsidian/README.md.
+OBSIDIAN_VAULT="${OBSIDIAN_HABITS_VAULT:-$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/Habits}"
+obsidian_src="obsidian/vault-obsidian"
+if [ -d "$obsidian_src" ]; then
+  if [ -d "$OBSIDIAN_VAULT" ]; then
+    mkdir -p "$OBSIDIAN_VAULT/.obsidian"
+    rsync -a "$DOTFILES_DIR/$obsidian_src/" "$OBSIDIAN_VAULT/.obsidian/"
+    echo "copied: obsidian config + plugins -> $OBSIDIAN_VAULT/.obsidian/"
+  else
+    echo "skip: Habits vault not found at $OBSIDIAN_VAULT"
+    echo "      create it first (obsidian-habit-tracker deploy), then re-run ./install"
+    echo "      — or set OBSIDIAN_HABITS_VAULT to the vault path."
+  fi
+fi
+
 echo "Done. Dotfiles stowed into $TARGET."
