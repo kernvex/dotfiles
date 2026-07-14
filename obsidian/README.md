@@ -22,7 +22,9 @@ so it lays down our config + plugins while leaving untouched:
 
 - `.obsidian/types.json` — owned by the `obsidian-habit-tracker` generator.
 - `.obsidian/workspace.json`, `workspace-mobile.json` — runtime layout.
-- `plugins/<id>/data.json` — plugin runtime settings.
+- `plugins/<id>/data.json` — plugin runtime settings, **except** the shipped
+  `plugins/dataview/data.json` (seeds `enableDataviewJs: true` so the
+  heatmap/dashboard `dataviewjs` blocks work headless out of the box).
 
 The vault path defaults to the iCloud container; override with
 `OBSIDIAN_HABITS_VAULT`. If the vault doesn't exist yet, install skips this with
