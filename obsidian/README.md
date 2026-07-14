@@ -20,13 +20,19 @@ spaced-repetition's `algorithm: FSRS`).
 
 ## How it's applied
 
-`./install` runs, per vault, `rsync -a obsidian/<name>/vault-obsidian/ <vault>/.obsidian/`
-(no `--delete`), laying down config + plugins while leaving untouched:
+`./install` runs, per vault, `rsync -a --exclude=data.json obsidian/<name>/vault-obsidian/
+<vault>/.obsidian/` (no `--delete`) to reassert config + plugin binaries, then
+copies each `plugins/*/data.json` **only if the vault doesn't already have one**.
+Left untouched:
 
 - `.obsidian/types.json` — owned by the vault's generator (`obsidian-habit-tracker`
   / `obsidian-lingo`).
 - `.obsidian/workspace.json`, `workspace-mobile.json` — runtime layout.
-- `plugins/<id>/data.json` — plugin runtime settings, except the seeds we ship.
+- `plugins/<id>/data.json` — plugin runtime settings: **seeded only if absent**, so
+  a fresh machine gets our defaults (spaced-repetition `algorithm: FSRS`, Dataview
+  `enableDataviewJs`) but your later in-app tweaks are never clobbered by a re-install.
+  To bake a live change into the repo, edit the seed here (in-app tweaks don't
+  flow back automatically).
 
 Vault paths default to the iCloud container; override with `OBSIDIAN_HABITS_VAULT`
 / `OBSIDIAN_LINGO_VAULT`. If a vault doesn't exist yet, install skips it — create

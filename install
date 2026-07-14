@@ -88,13 +88,26 @@ obsidian_container="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents"
 obsidian_copy() { # $1 = package subdir (obsidian/<name>), $2 = target vault path
   local src="$DOTFILES_DIR/obsidian/$1/vault-obsidian"
   [ -d "$src" ] || return 0
-  if [ -d "$2" ]; then
-    mkdir -p "$2/.obsidian"
-    rsync -a "$src/" "$2/.obsidian/"
-    echo "copied: obsidian/$1 -> $2/.obsidian/"
-  else
+  if [ ! -d "$2" ]; then
     echo "skip: $1 vault not found at $2 (create it, then re-run ./install)"
+    return 0
   fi
+  mkdir -p "$2/.obsidian"
+  # Config + plugin binaries are reasserted every run. Plugin runtime settings
+  # (plugins/*/data.json — e.g. the spaced-repetition algorithm) are SEEDED ONLY
+  # IF ABSENT, so a fresh machine gets our defaults but your in-app tweaks are
+  # never clobbered by a later ./install.
+  rsync -a --exclude='data.json' "$src/" "$2/.obsidian/"
+  local rel
+  while IFS= read -r rel; do
+    rel="${rel#./}"
+    if [ ! -f "$2/.obsidian/$rel" ]; then
+      mkdir -p "$2/.obsidian/$(dirname "$rel")"
+      cp "$src/$rel" "$2/.obsidian/$rel"
+      echo "seeded (new): $1/$rel"
+    fi
+  done < <(cd "$src" && find . -name data.json -path './plugins/*')
+  echo "copied: obsidian/$1 -> $2/.obsidian/ (plugin settings preserved)"
 }
 obsidian_copy habits "${OBSIDIAN_HABITS_VAULT:-$obsidian_container/Habits}"
 obsidian_copy lingo  "${OBSIDIAN_LINGO_VAULT:-$obsidian_container/Lingo}"
