@@ -1,0 +1,15 @@
+{
+  "flashcardTags": ["#flashcards"],
+  "convertFoldersToDecks": false,
+  "algorithm": "FSRS",
+  "fsrsDesiredRetention": 0.9,
+  "singleLineCardSeparator": "::",
+  "singleLineReversedCardSeparator": ":::",
+  "multilineCardSeparator": "?",
+  "multilineReversedCardSeparator": "??",
+  "convertHighlightsToClozes": true,
+  "convertBoldTextToClozes": false,
+  "convertCurlyBracketsToClozes": false,
+  "burySiblingCards": true,
+  "dataStore": "NOTES"
+}

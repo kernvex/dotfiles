@@ -1,57 +1,47 @@
 # obsidian
 
-The **Habits** vault's `.obsidian` config and its pinned community-plugin
-binaries — the reproducible half of the habit tracker. (The habit *system* —
-`habits.md` + generators — lives in the separate
-[`obsidian-habit-tracker`](https://github.com/6eniu5/obsidian-habit-tracker)
-repo, an esetup submodule.)
+Each Obsidian vault's `.obsidian` config + pinned community-plugin binaries, **one
+subdir per vault**. Copy-managed, **not stowed** — the vaults live in the iCloud
+container (symlinks misbehave there) and Obsidian rewrites its own JSON at
+runtime, same reasons as `claude/settings.json`.
 
-## Copy-managed, not stowed
+## Vaults
 
-Like `claude/settings.json`, this is **copied** by `./install`, never
-stow-symlinked, for two reasons:
+| subdir | vault | plugins |
+|---|---|---|
+| `habits/` | `Documents/Habits` | Bases (core) · Dataview · Heatmap Tracker · Charts for Bases |
+| `lingo/`  | `Documents/Lingo`  | obsidian-spaced-repetition (FSRS) · Templates (core) |
 
-1. The vault lives in the Obsidian **iCloud container**
-   (`~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Habits`), and
-   symlinks into an iCloud-synced folder misbehave.
-2. Obsidian atomically rewrites its own `.obsidian/*.json` at runtime, which
-   would detach a symlink.
+Each holds a `vault-obsidian/` tree — the files `./install` copies into
+`<vault>/.obsidian/`: `core-plugins.json`, `community-plugins.json`, per-vault
+settings, and pinned `plugins/<id>/` binaries (with a seeded `data.json` where a
+plugin needs a non-default setting — Dataview's `enableDataviewJs`,
+spaced-repetition's `algorithm: FSRS`).
 
-`./install` runs `rsync -a vault-obsidian/ <vault>/.obsidian/` (no `--delete`),
-so it lays down our config + plugins while leaving untouched:
+## How it's applied
 
-- `.obsidian/types.json` — owned by the `obsidian-habit-tracker` generator.
+`./install` runs, per vault, `rsync -a obsidian/<name>/vault-obsidian/ <vault>/.obsidian/`
+(no `--delete`), laying down config + plugins while leaving untouched:
+
+- `.obsidian/types.json` — owned by the vault's generator (`obsidian-habit-tracker`
+  / `obsidian-lingo`).
 - `.obsidian/workspace.json`, `workspace-mobile.json` — runtime layout.
-- `plugins/<id>/data.json` — plugin runtime settings, **except** the shipped
-  `plugins/dataview/data.json` (seeds `enableDataviewJs: true` so the
-  heatmap/dashboard `dataviewjs` blocks work headless out of the box).
+- `plugins/<id>/data.json` — plugin runtime settings, except the seeds we ship.
 
-The vault path defaults to the iCloud container; override with
-`OBSIDIAN_HABITS_VAULT`. If the vault doesn't exist yet, install skips this with
-a note — create the vault first (via the generator's deploy), then re-run
-`./install`.
+Vault paths default to the iCloud container; override with `OBSIDIAN_HABITS_VAULT`
+/ `OBSIDIAN_LINGO_VAULT`. If a vault doesn't exist yet, install skips it — create
+it (via the generator's deploy), then re-run `./install`.
 
-## What's tracked
+## Adding a vault
 
-| file | purpose |
-|---|---|
-| `core-plugins.json` | enables Daily notes, Templates, Properties, **Bases** |
-| `community-plugins.json` | Dataview, Heatmap Tracker, Charts for Bases |
-| `daily-notes.json` | folder `Daily`, format `YYYY-MM-DD`, template `Templates/daily` |
-| `templates.json` | folder `Templates` |
-| `app.json`, `appearance.json` | misc vault settings |
-| `plugins/{dataview,heatmap-tracker,charts}/` | **pinned** plugin binaries (headless install) |
-
-Requires Obsidian ≥ 1.12.4 (Bases). Bump a plugin by re-downloading its release
-assets into `plugins/<id>/` and committing.
+Add `obsidian/<name>/vault-obsidian/` plus one `obsidian_copy <name> <path>` line
+in `install`. Pairs with a generator submodule in esetup.
 
 ## Syncing runtime changes back
 
-Changed a setting in Obsidian and want the repo to match?
-
 ```bash
-obsidian-config-sync   # copies the tracked .obsidian/*.json back here, shows the diff
+obsidian-config-sync [habits|lingo]   # copies tracked .obsidian/*.json back here, shows the diff
 ```
 
-then review and `git commit`. (Lives in the `bin` package. It syncs config JSON
-only — never plugin binaries or the generator-owned `types.json`.)
+then review and `git commit`. (In the `bin` package; config JSON only — never
+plugin binaries or the generator-owned `types.json`.)

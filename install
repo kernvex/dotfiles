@@ -78,24 +78,25 @@ if [ -f "$claude_src" ]; then
   echo "copied: $claude_src -> $claude_dst"
 fi
 
-# Obsidian: the Habits vault's .obsidian config + pinned community-plugin
-# binaries are COPY-managed (not stowed). The vault lives in the iCloud
-# container, where symlinks misbehave, and Obsidian rewrites its own JSON at
-# runtime — same reasons as claude/settings.json. types.json is owned by the
-# obsidian-habit-tracker generator and is deliberately NOT shipped here, so the
-# rsync (no --delete) leaves it and workspace.json untouched. See obsidian/README.md.
-OBSIDIAN_VAULT="${OBSIDIAN_HABITS_VAULT:-$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/Habits}"
-obsidian_src="obsidian/vault-obsidian"
-if [ -d "$obsidian_src" ]; then
-  if [ -d "$OBSIDIAN_VAULT" ]; then
-    mkdir -p "$OBSIDIAN_VAULT/.obsidian"
-    rsync -a "$DOTFILES_DIR/$obsidian_src/" "$OBSIDIAN_VAULT/.obsidian/"
-    echo "copied: obsidian config + plugins -> $OBSIDIAN_VAULT/.obsidian/"
+# Obsidian: each vault's .obsidian config + pinned community-plugin binaries are
+# COPY-managed (not stowed). The vaults live in the iCloud container, where
+# symlinks misbehave, and Obsidian rewrites its own JSON at runtime — same reason
+# as claude/settings.json. rsync (no --delete) leaves the generator-owned
+# types.json and workspace files untouched. One subdir per vault under obsidian/.
+# See obsidian/README.md.
+obsidian_container="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents"
+obsidian_copy() { # $1 = package subdir (obsidian/<name>), $2 = target vault path
+  local src="$DOTFILES_DIR/obsidian/$1/vault-obsidian"
+  [ -d "$src" ] || return 0
+  if [ -d "$2" ]; then
+    mkdir -p "$2/.obsidian"
+    rsync -a "$src/" "$2/.obsidian/"
+    echo "copied: obsidian/$1 -> $2/.obsidian/"
   else
-    echo "skip: Habits vault not found at $OBSIDIAN_VAULT"
-    echo "      create it first (obsidian-habit-tracker deploy), then re-run ./install"
-    echo "      — or set OBSIDIAN_HABITS_VAULT to the vault path."
+    echo "skip: $1 vault not found at $2 (create it, then re-run ./install)"
   fi
-fi
+}
+obsidian_copy habits "${OBSIDIAN_HABITS_VAULT:-$obsidian_container/Habits}"
+obsidian_copy lingo  "${OBSIDIAN_LINGO_VAULT:-$obsidian_container/Lingo}"
 
 echo "Done. Dotfiles stowed into $TARGET."

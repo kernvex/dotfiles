@@ -37,7 +37,7 @@ Requires `stow` (`brew install stow`). The wider machine bootstrap — Homebrew,
 | `nvim` | `~/.config/nvim` (submodule → `6eniu5/kickstart.nvim`) |
 | `swiftbar` | `~/.config/swiftbar/plugins` (CPU/RAM menu-bar plugin, via SwiftBar) |
 | `claude` | `~/.claude/statusline-pace.py` (symlink); `settings.json` is **copied** by `install`, not stowed — see `claude/README.md` |
-| `obsidian` | **copied** by `install` into the Habits vault's `.obsidian/` (config + pinned Dataview/Heatmap/Charts plugins), not stowed — see `obsidian/README.md`. Pairs with the `obsidian-habit-tracker` esetup submodule. |
+| `obsidian` | **copied** by `install` into each vault's `.obsidian/` (one subdir per vault: `habits/`, `lingo/` — config + pinned plugins), not stowed — see `obsidian/README.md`. Pairs with the `obsidian-habit-tracker` / `obsidian-lingo` esetup submodules. |
 | `ssh` | `~/.ssh/config` (personal github.com default; **no** private keys — company keys route per-folder via git `includeIf`) |
 
 **Submodules**
