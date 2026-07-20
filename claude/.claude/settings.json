@@ -47,6 +47,7 @@
       "SendMessage"
     ]
   },
+  "autoMemoryEnabled": false,
   "disableBundledSkills": true,
   "disableWorkflows": true,
   "disableRemoteControl": true,
