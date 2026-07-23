@@ -10,7 +10,16 @@ runtime, same reasons as `claude/settings.json`.
 | subdir | vault | plugins |
 |---|---|---|
 | `habits/` | `Documents/Habits` | Bases (core) · Dataview · Heatmap Tracker · Charts for Bases |
-| `lingo/`  | `Documents/Lingo`  | obsidian-spaced-repetition (FSRS) · Templates (core) |
+| `lingo/`  | `Documents/Lingo`  | obsidian-spaced-repetition (FSRS) · Dataview · Breadcrumbs · Juggl · Templates (core) |
+
+Lingo's query plugins are a deliberate dependency of the Concept-relations
+feature ([obsidian-lingo ADR-0007]): Dataview renders each Word's live
+opposite/synonym hint and is **required** (an unrendered callout otherwise),
+Breadcrumbs supplies the implied reverse edge, Juggl colours the graph. Add
+`opposite` and `synonyms` as self-inverse edge fields in Breadcrumbs' settings —
+there is no seeded `data.json` for it, so its own defaults stay intact.
+
+[obsidian-lingo ADR-0007]: https://github.com/kernvex/obsidian-lingo/blob/main/docs/adr/0007-concept-relations-typed-links-and-query-plugins.md
 
 Each holds a `vault-obsidian/` tree — the files `./install` copies into
 `<vault>/.obsidian/`: `core-plugins.json`, `community-plugins.json`, per-vault
