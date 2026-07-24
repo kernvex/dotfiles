@@ -34,6 +34,7 @@ Requires `stow` (`brew install stow`). The wider machine bootstrap — Homebrew,
 | `atuin` | `~/.config/atuin` |
 | `git` | `~/.gitconfig` |
 | `htop` | `~/.config/htop` |
+| `lazygit` | `~/.config/lazygit/config.yml` (line-by-line staging default, undoing the v0.54 hunk-mode switch) |
 | `nvim` | `~/.config/nvim` (submodule → `kernvex/kickstart.nvim`) |
 | `swiftbar` | `~/.config/swiftbar/plugins` (CPU/RAM menu-bar plugin, via SwiftBar) |
 | `claude` | `~/.claude/statusline-pace.py` (symlink); `settings.json` is **copied** by `install`, not stowed — see `claude/README.md` |

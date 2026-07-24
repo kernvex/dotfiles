@@ -1,0 +1,15 @@
+# lazygit — https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md
+# Stowed to ~/.config/lazygit/config.yml (XDG_CONFIG_HOME is set, so lazygit
+# reads ~/.config here, NOT ~/Library/Application Support/lazygit).
+# Verify with: lazygit --print-config-dir
+
+gui:
+  # lazygit v0.54 made hunk selection the default in the staging view. Keep the
+  # older line-by-line default: staging a line is the finer-grained primitive and
+  # `a` still toggles hunk mode on when a whole hunk is what you want.
+  #
+  # Side effect worth knowing: with hunk mode entered manually via `a`, the first
+  # <esc> in the staging view drops you back to line mode rather than leaving the
+  # view (staging_controller.go Escape()). Defaulting to line mode means <esc>
+  # leaves the view on the first press.
+  useHunkModeInStagingView: false
