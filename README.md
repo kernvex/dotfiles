@@ -53,3 +53,7 @@ until you run `git submodule sync --recursive` — see
 
 - `keyboard/` — Advantage360 SmartSet config (`reg.xml`, `layout2.txt`, `led2.txt`)
 - `raycast/` — Raycast export instructions
+- `macos/` — system `defaults` (key repeat), applied imperatively by `install` via
+  `macos/defaults.sh`. Not stowed: cfprefsd rewrites these plists in place and detaches
+  symlinks, same as `claude/settings.json`. See
+  [`docs/adr/0002-key-repeat-threshold-over-slider-minimum.md`](docs/adr/0002-key-repeat-threshold-over-slider-minimum.md).

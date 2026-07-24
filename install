@@ -112,4 +112,10 @@ obsidian_copy() { # $1 = package subdir (obsidian/<name>), $2 = target vault pat
 obsidian_copy habits "${OBSIDIAN_HABITS_VAULT:-$obsidian_container/Habits}"
 obsidian_copy lingo  "${OBSIDIAN_LINGO_VAULT:-$obsidian_container/Lingo}"
 
+# macOS system defaults (key repeat). Not stowed — cfprefsd owns these plists and
+# would detach a symlink on its first write. See macos/defaults.sh.
+if [ -x macos/defaults.sh ]; then
+  ./macos/defaults.sh
+fi
+
 echo "Done. Dotfiles stowed into $TARGET."
