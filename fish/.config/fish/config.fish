@@ -4,7 +4,7 @@ set -gx GIT_EDITOR nvim
 # Pin the locale so Python/Perl/etc. don't emit "setlocale" warnings when the
 # terminal forwards an unset or exotic LC_*.
 set -gx LANG en_US.UTF-8
-set -gx DOTFILES $HOME/6eniu5/dotfiles
+set -gx DOTFILES $HOME/kernvex/dotfiles
 set -q CU_OWNER; or set -gx CU_OWNER $USER
 set -gx PNPM_HOME $HOME/Library/pnpm
 

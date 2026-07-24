@@ -1,6 +1,6 @@
 [user]
-	name = 6eniu5
-	email = dev.6eniu5@gmail.com
+	name = kernvex
+	email = kernvex@gmail.com
 [filter "lfs"]
 	process = git-lfs filter-process
 	required = true

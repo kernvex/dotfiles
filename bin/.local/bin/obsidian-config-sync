@@ -8,7 +8,7 @@
 # Usage: obsidian-config-sync [habits|lingo]   (default: all vaults)
 set -euo pipefail
 
-DOTFILES="${DOTFILES:-$HOME/6eniu5/dotfiles}"
+DOTFILES="${DOTFILES:-$HOME/kernvex/dotfiles}"
 CONTAINER="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents"
 FILES="app.json appearance.json core-plugins.json community-plugins.json daily-notes.json templates.json"
 ANY=0

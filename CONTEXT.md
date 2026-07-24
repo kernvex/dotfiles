@@ -11,7 +11,7 @@ details, no decisions (those live in `docs/adr/`).
   about to commit as, right now."
 
 - **Default identity** — the personal identity set at the top of the public
-  `~/.gitconfig` (`6eniu5`). Applies wherever no `includeIf` rule takes over.
+  `~/.gitconfig` (`kernvex`). Applies wherever no `includeIf` rule takes over.
 
 - **Routed identity** — an identity supplied by an `[includeIf "gitdir:…"]` rule
   (e.g. company `josh-y8` for repos under the Bench folder). The routing rules
@@ -31,6 +31,6 @@ details, no decisions (those live in `docs/adr/`).
 
 - **Display path** — the human-facing location string shown for a directory:
   - not in a git repo → the leaf directory name;
-  - at a repo root → `<parent-dir>/<repo-name>` (e.g. `6eniu5/dotfiles`), so the
-    surrounding "world" (personal `6eniu5` vs company `Bench`) stays visible;
+  - at a repo root → `<parent-dir>/<repo-name>` (e.g. `kernvex/dotfiles`), so the
+    surrounding "world" (personal `kernvex` vs company `Bench`) stays visible;
   - nested inside a repo → `<repo-name>/<path-within-repo>`.

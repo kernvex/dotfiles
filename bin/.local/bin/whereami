@@ -11,7 +11,7 @@ It answers three questions:
 
   Where am I?   A display path that keeps the surrounding "world" visible:
                   not a repo      → the leaf directory name
-                  at a repo root  → <parent>/<repo>   e.g. 6eniu5/dotfiles
+                  at a repo root  → <parent>/<repo>   e.g. kernvex/dotfiles
                   nested          → <repo>/<within>    e.g. dotfiles/claude/.claude
   What state?   Current branch (short SHA if detached) and whether the working
                 tree is dirty.
@@ -71,7 +71,7 @@ def display_path(cwd, toplevel):
     repo = os.path.basename(top_real)
 
     if os.path.realpath(cwd) == top_real:
-        # At the root: show one directory above so the world (6eniu5 vs Bench)
+        # At the root: show one directory above so the world (kernvex vs Bench)
         # stays visible. `parent` is empty only if the repo sits at "/".
         parent = os.path.basename(os.path.dirname(top_real))
         return f"{parent}/{repo}" if parent else repo

@@ -7,7 +7,7 @@
 # atomically rewrites it — see claude/README.md.
 set -euo pipefail
 
-DOTFILES="${DOTFILES:-$HOME/6eniu5/dotfiles}"
+DOTFILES="${DOTFILES:-$HOME/kernvex/dotfiles}"
 src="$HOME/.claude/settings.json"
 dst="$DOTFILES/claude/.claude/settings.json"
 

@@ -6,8 +6,8 @@ self-installing, and portable — clone anywhere and run `./install`.
 ## Install
 
 ```bash
-git clone git@github.com:6eniu5/dotfiles.git ~/6eniu5/dotfiles
-cd ~/6eniu5/dotfiles
+git clone git@github.com:kernvex/dotfiles.git ~/kernvex/dotfiles
+cd ~/kernvex/dotfiles
 ./install
 ```
 
@@ -34,7 +34,7 @@ Requires `stow` (`brew install stow`). The wider machine bootstrap — Homebrew,
 | `atuin` | `~/.config/atuin` |
 | `git` | `~/.gitconfig` |
 | `htop` | `~/.config/htop` |
-| `nvim` | `~/.config/nvim` (submodule → `6eniu5/kickstart.nvim`) |
+| `nvim` | `~/.config/nvim` (submodule → `kernvex/kickstart.nvim`) |
 | `swiftbar` | `~/.config/swiftbar/plugins` (CPU/RAM menu-bar plugin, via SwiftBar) |
 | `claude` | `~/.claude/statusline-pace.py` (symlink); `settings.json` is **copied** by `install`, not stowed — see `claude/README.md` |
 | `obsidian` | **copied** by `install` into each vault's `.obsidian/` (one subdir per vault: `habits/`, `lingo/` — config + pinned plugins), not stowed — see `obsidian/README.md`. Pairs with the `obsidian-habit-tracker` / `obsidian-lingo` esetup submodules. |
@@ -42,8 +42,8 @@ Requires `stow` (`brew install stow`). The wider machine bootstrap — Homebrew,
 
 **Submodules**
 
-- `nvim/.config/nvim` → `6eniu5/kickstart.nvim`
-- `tmux-sessionizer` → `6eniu5/tmux-sessionizer` (the tool; `bin/` links to it)
+- `nvim/.config/nvim` → `kernvex/kickstart.nvim`
+- `tmux-sessionizer` → `kernvex/tmux-sessionizer` (the tool; `bin/` links to it)
 
 **Artifact areas** (not stowed — applied by esetup, or by hand):
 
