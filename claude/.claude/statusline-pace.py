@@ -220,8 +220,8 @@ def whereami(cwd):
     """The current dir's git context via the shared `whereami` script, or None.
 
     Run IN the session's cwd (not the statusline process's), with a timeout so a
-    slow git call in a giant repo drops the git line for one render rather than
-    stalling the prompt. Same shell-out contract as render_sys()/sysusage.
+    slow git call in a giant repo drops the git segment for one render rather
+    than stalling the prompt. Same shell-out contract as render_sys()/sysusage.
     """
     try:
         out = subprocess.run(
@@ -237,10 +237,13 @@ def whereami(cwd):
 
 
 def render_git(info):
-    """Line three: `branch* ☉ identity`, or None when we're not in a repo.
+    """`branch* ☉ identity` for the tail of line two, or None outside a repo.
 
-    The identity turns red on a mismatch — you're about to commit as an identity
-    the folder's includeIf routing says is wrong (whereami computes this).
+    Branch, tree state and committing identity all answer one question — what
+    am I about to write, and as whom? — so they trail the path on a single
+    line. The `*` marks a dirty tree; the identity turns red on a mismatch,
+    meaning you're about to commit as an identity the folder's includeIf
+    routing says is wrong (whereami computes this).
     """
     branch = info.get("branch")
     if not branch:
@@ -313,7 +316,8 @@ def main():
     cwd = (data.get("workspace") or {}).get("current_dir") or data.get("cwd")
     git = whereami(cwd)
 
-    # Line two: who am I talking to, and how hard is it thinking?
+    # Line two: who am I talking to, how hard is it thinking, and where does it
+    # stand — path, branch, tree state, committing identity.
     head = paint(BOLD, model)
     if effort:
         head += paint(DIM, f" · {effort}")
@@ -325,6 +329,12 @@ def main():
         path = os.path.basename(cwd)
     if path:
         head += paint(DIM, f"  {path}")
+
+    # …then the branch, tree state and identity, completing the "where and whom".
+    if git:
+        git_seg = render_git(git)
+        if git_seg:
+            head += "  " + git_seg
 
     # Line one: the meters, side by side.
     ctx_pct = ctx.get("used_percentage")
@@ -348,16 +358,10 @@ def main():
 
     lines = [sep.join(meters), head]
 
-    # Line three: git context, only when we're inside a repo.
-    if git:
-        git_line = render_git(git)
-        if git_line:
-            lines.append(git_line)
-
     # A dim horizontal rule between rows, sized to the widest line. Claude Code's
     # TUI trims blank/whitespace-only rows, so a visible rule — not empty space —
     # is what actually renders as separation: a light border between the lines. A
-    # closing rule after the last line gives the git info a divider beneath it too.
+    # closing rule after the last line gives the head line a divider beneath it too.
     width = max((visible_len(line) for line in lines), default=0)
     rule = paint(DIM, "─" * width)
     print(("\n" + rule + "\n").join(lines) + "\n" + rule)
