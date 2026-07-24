@@ -45,6 +45,10 @@ Requires `stow` (`brew install stow`). The wider machine bootstrap — Homebrew,
 - `nvim/.config/nvim` → `kernvex/kickstart.nvim`
 - `tmux-sessionizer` → `kernvex/tmux-sessionizer` (the tool; `bin/` links to it)
 
+A clone made before the `6eniu5` → `kernvex` rename still fetches the old URLs
+until you run `git submodule sync --recursive` — see
+[`docs/notes/submodule-url-sync.md`](docs/notes/submodule-url-sync.md).
+
 **Artifact areas** (not stowed — applied by esetup, or by hand):
 
 - `keyboard/` — Advantage360 SmartSet config (`reg.xml`, `layout2.txt`, `led2.txt`)
