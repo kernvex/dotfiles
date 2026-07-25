@@ -34,3 +34,18 @@ details, no decisions (those live in `docs/adr/`).
   - at a repo root → `<parent-dir>/<repo-name>` (e.g. `kernvex/dotfiles`), so the
     surrounding "world" (personal `kernvex` vs company `Bench`) stays visible;
   - nested inside a repo → `<repo-name>/<path-within-repo>`.
+
+## Session terms
+
+- **Search path** — a root directory the sessionizer walks to gather candidates,
+  descending a fixed number of levels rather than to the bottom of the tree. The
+  standing set (`~/`, `~/Documents/Projects`) is the "where my work lives" answer.
+
+- **Extra search path** — a search path that carries its own depth (`~/.config:2`,
+  `~/Documents/Learning:1`) instead of inheriting the default. For a root whose
+  useful directories sit at one level and whose scaffolding sits below them, the
+  explicit depth is what keeps the scaffolding out of the picker.
+
+- **Session candidate** — anything the picker offers: a walked directory, or a live
+  tmux session shown as `[TMUX] <name>`. The current session is never a candidate —
+  you cannot jump to where you already are.
