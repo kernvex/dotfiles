@@ -75,4 +75,4 @@ already-running Claude processes need a restart to pick up the environment.
 | `bind F` → `tmux-session-here` | Second/third session for the *same* directory (`dotfiles-review`, `dotfiles-2`), for running more than one Claude conversation on one repo. Siblings show up in the Ctrl-f picker as `[TMUX] …`. |
 | `bind A` → `<project>-ask` | The common case of the above: a `claude --permission-mode plan` sidecar. Read-only, so you can ask it something while another agent is mid-edit without racing it or breaking its flow. One per project — press again to return to it. |
 
-Rationale in [`docs/adr/0003-tmux-tuned-for-claude-code.md`](docs/adr/0003-tmux-tuned-for-claude-code.md).
+Rationale in [`docs/adr/0004-tmux-tuned-for-claude-code.md`](docs/adr/0004-tmux-tuned-for-claude-code.md).
