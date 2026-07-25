@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# tmux-session-here — a second (third, fourth…) tmux session for the SAME directory.
+#
+# tmux-sessionizer maps one directory to one session, named after the folder's
+# basename, and that mapping is the whole point: jumping to a project you are
+# already in switches you back instead of duplicating it. It is also exactly
+# wrong when you want two Claude Code conversations on one repo — the second
+# terminal lands in the session the first one is already running in, so it looks
+# like Claude "resumed" when really tmux just handed you the same pane back.
+#
+# This creates sibling sessions named `<project>-<label>`, rooted at the same
+# directory. They show up in the sessionizer's own `[TMUX] …` list, so Ctrl-f
+# picks between them afterwards with no extra machinery.
+#
+# Usage:
+#   tmux-session-here                  # next free <project>-2, -3, …
+#   tmux-session-here review           # <project>-review
+#   tmux-session-here review claude    # …and start `claude` in it
+#   tmux-session-here "" claude        # auto-numbered, running claude
+#
+#   # the read-only sidecar: ask a question while another agent is mid-edit
+#   tmux-session-here ask 'claude --permission-mode plan'
+#
+# Bound to prefix-F in ~/.tmux.conf (prompts for the label), and prefix-A for
+# that last line specifically.
+
+set -euo pipefail
+
+if ! command -v tmux >/dev/null 2>&1; then
+    echo "tmux is not installed." >&2
+    exit 1
+fi
+
+dir="${TS_HERE_DIR:-$PWD}"
+label="${1:-}"
+cmd="${2:-}"
+
+# Match tmux-sessionizer's naming: basename, dots to underscores. tmux treats
+# `.` and `:` as target-spec separators, so they must not survive into a name.
+base="$(basename "$dir" | tr '.:' '__')"
+
+# Keep the label to characters that are safe in a tmux target and readable in
+# the status bar. Anything else collapses to a dash.
+label="${label//[^A-Za-z0-9_-]/-}"
+while [[ $label == *--* ]]; do label="${label//--/-}"; done
+while [[ $label == -* ]]; do label="${label#-}"; done
+while [[ $label == *- ]]; do label="${label%-}"; done
+
+if [[ -z $label ]]; then
+    n=2
+    while tmux has-session -t "=${base}-${n}" 2>/dev/null; do
+        n=$((n + 1))
+    done
+    label="$n"
+fi
+
+name="${base}-${label}"
+
+if ! tmux has-session -t "=$name" 2>/dev/null; then
+    if [[ -n $cmd ]]; then
+        tmux new-session -ds "$name" -c "$dir" "$cmd"
+    else
+        tmux new-session -ds "$name" -c "$dir"
+    fi
+fi
+
+# Same switch/attach split the sessionizer uses: inside tmux you move the client,
+# outside it you attach one.
+if [[ -z ${TMUX:-} ]]; then
+    tmux attach-session -t "=$name"
+else
+    tmux switch-client -t "=$name"
+fi
