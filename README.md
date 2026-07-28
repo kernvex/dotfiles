@@ -16,7 +16,7 @@ cd ~/kernvex/dotfiles
 Any real file already at a target is moved aside to `*.bak.<timestamp>` first.
 
 Requires `stow` (`brew install stow`). The wider machine bootstrap — Homebrew, runtimes, fonts
-(including `font-vazirmatn` for the WezTerm Persian fallback), secrets — lives in a separate
+(including `font-dejavu` for the WezTerm Persian fallback), secrets — lives in a separate
 `esetup` installer, which calls this repo's `./install`.
 
 ## Layout

@@ -4,18 +4,38 @@ return {
   font = wezterm.font_with_fallback({
     { family = "JetBrains Mono", weight = "Light" },
     { family = "JetBrainsMono Nerd Font", weight = "Light" },
+    -- Persian/RTL fallback (bidi_enabled below); installed via brew `font-dejavu`.
+    --
+    -- The pick here is decided by advance width, not by looks. A terminal gives every
+    -- character exactly one cell, so a proportional Arabic face leaves the difference
+    -- between its advance and the cell as dead space -- and in a cursive script that
+    -- dead space lands between letters that are supposed to join. Vazirmatn is
+    -- proportional: its advances run 3..11.25 against a 9px cell, so alef alone left a
+    -- 6px hole and words came apart. DejaVu Sans Mono is 8.44/9.0 across all of Persian,
+    -- close enough to the cell that the joins hold.
+    --
+    -- Must also sit above Cascadia Code, which covers Arabic too and would otherwise
+    -- claim these glyphs first -- its final alef has a zero advance.
+    "DejaVu Sans Mono",
     "Cascadia Code",
     "MesloLGS NF",
-    -- Persian/RTL fallback (bidi_enabled below); installed via brew `font-vazirmatn`.
+    -- Backstop for anything DejaVu misses; proportional, so kept last.
     "Vazirmatn",
   }),
   font_size = 15,
 
   -- ﻦﺗ ﯽﺑﻮﺧ ﻡﻼ﻿ﺳ
 
-  -- Bidi support
+  -- Bidi support.
+  --
+  -- LeftToRight, not AutoLeftToRight. WezTerm resolves a base direction per
+  -- *terminal row*, so a TUI that wraps a Persian run mid-line leaves a row whose
+  -- first strong character is Persian. Auto-detection then reads that row as an RTL
+  -- paragraph and reorders the whole thing -- box borders included -- which is how
+  -- wrapped text ends up outside the frame it belongs to. Pinning the base direction
+  -- keeps every row LTR; Persian runs still shape and reverse within themselves.
   bidi_enabled = true,
-  bidi_direction = "AutoLeftToRight",
+  bidi_direction = "LeftToRight",
 
   -- color_scheme = "Batman",
   line_height = 1.0,
