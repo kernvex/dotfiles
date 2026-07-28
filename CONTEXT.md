@@ -49,3 +49,25 @@ details, no decisions (those live in `docs/adr/`).
 - **Session candidate** — anything the picker offers: a walked directory, or a live
   tmux session shown as `[TMUX] <name>`. The current session is never a candidate —
   you cannot jump to where you already are.
+
+## Teaching terms
+
+- **Teaching workspace** — a directory that *is* a course: a `MISSION.md` saying why
+  the topic matters, beside the `lessons/` and `reference/` pages built from it. The
+  unit the `teach` skill reads and writes. Most sit under `~/Documents/Learning`, but
+  it is the mission file that makes one, not the location — a course copied into
+  `Documents/Projects` is still a teaching workspace.
+
+## Drafting terms
+
+- **Shareable draft** — text written for you to send onward as your own: an email, a
+  message, a post. Distinguished from repo prose (docs, ADRs, commit messages), which
+  is openly agent-written, and from replies in a conversation, which never leave it.
+  The line is *apparent authorship*: a shareable draft will be read as your writing,
+  by someone who was not here when it was written.
+
+- **AI tell** — a feature of text that marks it as machine-written regardless of
+  whether it is any good: the characteristic punctuation, antithesis for emphasis,
+  three-item cadence, bulleted structure where a paragraph belongs. A property of
+  form, not of correctness — a paragraph can be accurate, well-argued, and still
+  riddled with them.

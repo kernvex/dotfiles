@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# teach-fullscreen — give every `teach` lesson and reference doc the `f` key.
+#
+# Installs assets/fullscreen.js into each teaching workspace and links it from
+# every lessons/*.html and reference/*.html. Idempotent: re-run it any time a
+# workspace drifts, or after editing the template, to bring everything back in
+# line.
+#
+# The template is the source of truth:
+#   ~/.claude/templates/teach/fullscreen.js  (stowed from dotfiles)
+#
+# Dry-run by default. Almost none of these workspaces are under git, so a mass
+# edit has no undo — see the plan first, then pass --apply.
+#
+#   teach-fullscreen                       # plan for ~/Documents/Learning/*
+#   teach-fullscreen --apply
+#   teach-fullscreen --apply ~/Documents/Learning/tmux
+set -euo pipefail
+
+TEMPLATE="${TEACH_FULLSCREEN_TEMPLATE:-$HOME/.claude/templates/teach/fullscreen.js}"
+DEFAULT_ROOT="${TEACH_WORKSPACE_ROOT:-$HOME/Documents/Learning}"
+NOTE_LINE='- Lessons and reference docs load `assets/fullscreen.js`, which binds `f` to toggle fullscreen. Keep the tag on every new page (`teach-fullscreen --apply` restores it).'
+
+apply=0
+targets=()
+
+for arg in "$@"; do
+  case "$arg" in
+    --apply) apply=1 ;;
+    --dry-run) apply=0 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "unknown flag: $arg" >&2; exit 2 ;;
+    *) targets+=("$arg") ;;
+  esac
+done
+
+if [ ! -f "$TEMPLATE" ]; then
+  echo "ERROR: template not found at $TEMPLATE" >&2
+  echo "       run ./install in the dotfiles repo to stow it." >&2
+  exit 1
+fi
+
+# No explicit workspaces given: every directory under the learning root that
+# looks like a teaching workspace (the skill always writes a MISSION.md).
+if [ ${#targets[@]} -eq 0 ]; then
+  while IFS= read -r m; do
+    targets+=("$(dirname "$m")")
+  done < <(find "$DEFAULT_ROOT" -maxdepth 2 -name MISSION.md -not -path '*/dist/*' | sort)
+fi
+
+[ ${#targets[@]} -gt 0 ] || { echo "no teaching workspaces found under $DEFAULT_ROOT"; exit 0; }
+
+# A page that already toggles fullscreen must not get a second binding: both
+# handlers would fire on one keypress, entering and immediately leaving.
+# IC_Panel_Call's deck.js does exactly this already.
+has_own_fullscreen() {
+  local html="$1" dir src path
+  dir="$(dirname "$html")"
+  grep -q 'requestFullscreen' "$html" && return 0
+  while IFS= read -r src; do
+    case "$src" in
+      fullscreen.js|*/fullscreen.js) continue ;;   # ours, not a conflict
+      http://*|https://*|//*) continue ;;
+    esac
+    path="$dir/$src"
+    [ -f "$path" ] || continue
+    grep -q 'requestFullscreen' "$path" && return 0
+  done < <(grep -o '<script[^>]*src="[^"]*"' "$html" 2>/dev/null | sed 's/.*src="//; s/"$//')
+  return 1
+}
+
+# lessons/x.html -> ../assets/fullscreen.js ; x.html -> assets/fullscreen.js
+asset_href() {
+  local ws="$1" html="$2" rel depth prefix=''
+  rel="${html#"$ws"/}"
+  depth="$(printf '%s' "$rel" | tr -cd '/' | wc -c | tr -d ' ')"
+  while [ "$depth" -gt 0 ]; do prefix="../$prefix"; depth=$((depth - 1)); done
+  printf '%sassets/fullscreen.js' "$prefix"
+}
+
+inject() {
+  local html="$1" tag="$2" tmp
+  tmp="$(mktemp)"
+  # Before </body> if there is one, otherwise at end of file.
+  awk -v tag="$tag" '
+    !done && /<\/body>/ { print tag; done = 1 }
+    { print }
+    END { if (!done) print tag }
+  ' "$html" > "$tmp"
+  cat "$tmp" > "$html"     # preserve the original inode/permissions
+  rm -f "$tmp"
+}
+
+n_assets=0 n_inject=0 n_ok=0 n_notes=0
+conflicts=()
+
+for ws in "${targets[@]}"; do
+  ws="${ws%/}"
+  [ -d "$ws" ] || { echo "skip (missing): $ws" >&2; continue; }
+
+  pages=()
+  while IFS= read -r f; do pages+=("$f"); done < <(
+    find "$ws/lessons" "$ws/reference" -name '*.html' -not -path '*/dist/*' 2>/dev/null | sort
+  )
+  [ ${#pages[@]} -gt 0 ] || { echo "— $(basename "$ws"): no lesson or reference pages"; continue; }
+
+  echo "— $(basename "$ws") (${#pages[@]} pages)"
+
+  # The component itself.
+  asset="$ws/assets/fullscreen.js"
+  if [ -f "$asset" ] && cmp -s "$TEMPLATE" "$asset"; then
+    :
+  else
+    echo "    assets/fullscreen.js  $([ -f "$asset" ] && echo update || echo install)"
+    if [ "$apply" -eq 1 ]; then
+      mkdir -p "$ws/assets"
+      cp "$TEMPLATE" "$asset"
+    fi
+    n_assets=$((n_assets + 1))
+  fi
+
+  for html in "${pages[@]}"; do
+    label="${html#"$ws"/}"
+    if grep -q 'assets/fullscreen\.js' "$html"; then
+      n_ok=$((n_ok + 1))
+      continue
+    fi
+    if has_own_fullscreen "$html"; then
+      echo "    SKIP  $label — already binds fullscreen of its own"
+      conflicts+=("$ws/$label")
+      continue
+    fi
+    echo "    link  $label"
+    if [ "$apply" -eq 1 ]; then
+      inject "$html" "<script src=\"$(asset_href "$ws" "$html")\"></script>"
+    fi
+    n_inject=$((n_inject + 1))
+  done
+
+  # The skill reads NOTES.md for preferences when designing a lesson; this is
+  # what keeps new pages carrying the tag without touching the upstream skill.
+  notes="$ws/NOTES.md"
+  if ! grep -qF 'assets/fullscreen.js' "$notes" 2>/dev/null; then
+    echo "    note  NOTES.md"
+    if [ "$apply" -eq 1 ]; then
+      [ -f "$notes" ] || printf '# Notes\n' > "$notes"
+      printf '\n%s\n' "$NOTE_LINE" >> "$notes"
+    fi
+    n_notes=$((n_notes + 1))
+  fi
+done
+
+echo
+if [ "$apply" -eq 1 ]; then
+  echo "applied: $n_assets component(s), $n_inject page(s) linked, $n_notes note(s); $n_ok already current"
+else
+  echo "planned: $n_assets component(s), $n_inject page(s) to link, $n_notes note(s); $n_ok already current"
+  echo "re-run with --apply to make these changes."
+fi
+
+if [ ${#conflicts[@]} -gt 0 ]; then
+  echo
+  echo "left alone (own fullscreen binding — check the key is 'f' by hand):"
+  printf '  %s\n' "${conflicts[@]}"
+fi

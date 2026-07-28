@@ -37,7 +37,7 @@ Requires `stow` (`brew install stow`). The wider machine bootstrap — Homebrew,
 | `lazygit` | `~/.config/lazygit/config.yml` (line-by-line staging default, undoing the v0.54 hunk-mode switch) |
 | `nvim` | `~/.config/nvim` (submodule → `kernvex/kickstart.nvim`) |
 | `swiftbar` | `~/.config/swiftbar/plugins` (CPU/RAM menu-bar plugin, via SwiftBar) |
-| `claude` | `~/.claude/statusline-pace.py` (symlink); `settings.json` is **copied** by `install`, not stowed — see `claude/README.md` |
+| `claude` | `~/.claude/statusline-pace.py`, `CLAUDE.md`, `templates/` (symlinks); `settings.json` is **copied** by `install`, not stowed — see `claude/README.md` |
 | `obsidian` | **copied** by `install` into each vault's `.obsidian/` (one subdir per vault: `habits/`, `lingo/` — config + pinned plugins), not stowed — see `obsidian/README.md`. Pairs with the `obsidian-habit-tracker` / `obsidian-lingo` esetup submodules. |
 | `ssh` | `~/.ssh/config` (personal github.com default; **no** private keys — company keys route per-folder via git `includeIf`) |
 
@@ -76,3 +76,59 @@ already-running Claude processes need a restart to pick up the environment.
 | `bind A` → `<project>-ask` | The common case of the above: a `claude --permission-mode plan` sidecar. Read-only, so you can ask it something while another agent is mid-edit without racing it or breaking its flow. One per project — press again to return to it. |
 
 Rationale in [`docs/adr/0004-tmux-tuned-for-claude-code.md`](docs/adr/0004-tmux-tuned-for-claude-code.md).
+
+## Teaching workspaces (`teach`)
+
+Lessons and reference docs under `~/Documents/Learning/*` toggle fullscreen on `f`.
+The `teach` skill is a fork tracking upstream, so none of this lives in the skill:
+the behaviour is a component the skill already knows how to pick up.
+
+| Piece | Role |
+|---|---|
+| `claude/.claude/templates/teach/fullscreen.js` | The component, and the single source of truth. Self-contained — one `<script>` tag is the whole integration. |
+| `claude/.claude/CLAUDE.md` | Global rule that seeds the component into any workspace missing it, so new workspaces get `f` unassisted. |
+| `bin/.local/bin/teach-fullscreen` | Installs the component and links it from every `lessons/*.html` and `reference/*.html`. |
+
+Edit the template, never the copies, then re-run `teach-fullscreen --apply` to
+propagate. The script is idempotent and doubles as drift repair; it prints a plan and
+changes nothing without `--apply`, because these workspaces are not under git.
+
+Rationale in [`docs/adr/0005-teach-lessons-go-fullscreen-without-forking-the-skill.md`](docs/adr/0005-teach-lessons-go-fullscreen-without-forking-the-skill.md).
+
+## Claude global rules
+
+`claude/.claude/CLAUDE.md` → `~/.claude/CLAUDE.md` is read at the start of every
+Claude Code session, in every project. It currently carries three rules.
+
+| Section | Rule |
+|---|---|
+| Teaching workspaces | Lessons and reference pages load `assets/fullscreen.js` (see above) |
+| Arabic-script text in HTML | Any page containing U+0600–U+06FF uses `"Vazirmatn", "Geeza Pro", system-ui, sans-serif`, with the font self-hosted beside the page. Never a CDN, never Roboto |
+| Text I will send as myself | Drafts meant to be sent onward (email, messages, posts) avoid em-dashes and the other tells that mark text as machine-written |
+
+Keep this file short. It is a standing cost on every session, including the many
+where none of it applies, and a long one dilutes everything in it.
+
+### Turning a rule off
+
+Each rule is one `##` section, and nothing outside the file depends on any of them —
+no script reads it, no build step enforces it. **Delete the section** and the rule
+stops applying to future work. Changes take effect in the next session, not the
+running one.
+
+Two of the three leave artifacts behind, which the deletion does not touch:
+
+- **Fullscreen** — pages keep their `<script>` tag and keep working. To unwind
+  properly, remove the tag and `assets/fullscreen.js` from each workspace, then
+  delete `claude/.claude/templates/teach/` and `bin/.local/bin/teach-fullscreen` and
+  re-run `./install`.
+- **Arabic-script font** — pages keep their `@font-face` blocks and bundled
+  `assets/fonts/*.woff2`. To unwind, delete both and leave the `font-family` stack
+  alone: Vazirmatn is installed system-wide, so pages still render correctly *here*
+  while quietly losing portability. See the reversal note in
+  [`docs/adr/0006-persian-html-ships-its-own-font.md`](docs/adr/0006-persian-html-ships-its-own-font.md).
+- **AI tells** — nothing to clean up. It only ever shaped text that was not yet
+  written.
+
+To suspend a rule for one session without editing anything, say so at the top of the
+conversation; a direct instruction outranks `CLAUDE.md`.
