@@ -160,7 +160,11 @@ if test -d $HOME/.sdkman
   set -gx SDKMAN_DIR $HOME/.sdkman
 end
 
-alias refresh_gh_token 'set -gx GITHUB_TOKEN (gh auth token)'
+# Disabled: an exported GITHUB_TOKEN outranks GH_CONFIG_DIR, so this made every
+# `gh` call in the shell use whichever account `gh auth token` resolved — which
+# defeats the per-folder identity routing and silently acts as the personal
+# account inside work repos. Uncomment only in a shell you won't use for work.
+# alias refresh_gh_token 'set -gx GITHUB_TOKEN (gh auth token)'
 
 # Added by OrbStack: command-line tools and integration
 # This won't be added again if you remove it.
