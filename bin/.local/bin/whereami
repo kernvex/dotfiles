@@ -137,7 +137,25 @@ def _gitdir_matches(gitdir, cond_dir, recursive, insensitive):
     return os.path.dirname(g) == c
 
 
-def identity_mismatch(cwd, gitdir, effective_name):
+def matched_include(gitdir):
+    """The includeIf target file routing this repo, or None if no rule covers it.
+
+    Last matching rule wins, mirroring git's "later include overrides earlier".
+    Two callers need this answer — the mismatch check, and `identity_routed`,
+    which reports the bare fact that a rule fired — so it lives here rather than
+    inside either, and `git config -l --show-origin` is walked once per call
+    instead of twice per gather().
+    """
+    if not gitdir:
+        return None
+    matched = None
+    for cond_dir, recursive, insensitive, target in _parse_includeif_rules():
+        if _gitdir_matches(gitdir, cond_dir, recursive, insensitive):
+            matched = target
+    return matched
+
+
+def identity_mismatch(cwd, gitdir, effective_name, matched):
     """True only when we're CONFIDENT the effective identity is the wrong one.
 
     Two failure modes are caught, everything else reports False:
@@ -146,15 +164,12 @@ def identity_mismatch(cwd, gitdir, effective_name):
       * no rule covers this folder yet the effective name comes from a repo-local
         override rather than the global default (company identity in a personal
         folder).
+
+    `matched` comes from matched_include() — passed in rather than recomputed so
+    gather() pays for the rule parse once.
     """
     if not gitdir or not effective_name:
         return False
-
-    # Last matching rule wins, mirroring git's "later include overrides earlier".
-    matched = None
-    for cond_dir, recursive, insensitive, target in _parse_includeif_rules():
-        if _gitdir_matches(gitdir, cond_dir, recursive, insensitive):
-            matched = target
 
     if matched is not None:
         # Routed folder: the routed file's identity is expected.
@@ -192,6 +207,8 @@ def gather():
         "dirty": False,
         "worktree": False,
         "identity": None,
+        "identity_email": None,
+        "identity_routed": False,
         "identity_mismatch": False,
     }
     if not toplevel:
@@ -214,7 +231,16 @@ def gather():
 
     identity = git("config", "user.name", cwd=cwd)
     info["identity"] = identity or None
-    info["identity_mismatch"] = identity_mismatch(cwd, gitdir, identity)
+    # The address half of "as whom?". The status line compares it against the
+    # Claude seat's account; nothing here interprets it.
+    info["identity_email"] = git("config", "user.email", cwd=cwd) or None
+
+    # Does an includeIf rule cover this repo? Consumers read this as "is this a
+    # company folder", derived from git's own routing rather than any hardcoded
+    # path — the same principle as the mismatch check below (ADR 0001).
+    matched = matched_include(gitdir)
+    info["identity_routed"] = matched is not None
+    info["identity_mismatch"] = identity_mismatch(cwd, gitdir, identity, matched)
 
     return info
 

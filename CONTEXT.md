@@ -27,6 +27,32 @@ details, no decisions (those live in `docs/adr/`).
   routing that should have applied did not (or a local `.git/config` override
   fired). The "am I about to commit as the wrong person?" alarm.
 
+- **Routed folder** — a directory an `includeIf gitdir:` rule covers. Since the
+  routing rules exist precisely to separate employers from personal work, "is
+  this folder routed?" is how tooling asks "is this company work?" without any
+  identity, employer or path being named in the code.
+
+- **Seat** — the Claude Code account answering in a session, selected by the
+  `CLAUDE_CONFIG_DIR` environment variable. One macOS account can carry several,
+  one per human-and-employer pair.
+
+- **Default seat** — the machine owner's, used when `CLAUDE_CONFIG_DIR` is unset
+  or points at `~/.claude`.
+
+- **Named seat** — any other: a directory `~/.claude-<first>-<last>-<company>`,
+  named so that two people sharing a first name cannot collide. The directory
+  name is the seat's unique identifier.
+
+- **Seat account** — the address a seat last logged in as, recorded as
+  `oauthAccount.emailAddress` in that seat's config file. Distinct from Keychain
+  state, which is what `claude auth status` reports.
+
+- **Seat mismatch** — the seat account disagrees with the effective identity of
+  the folder you are in: a company folder answered by the wrong account, or a
+  personal folder answered by someone else's seat. The "whose subscription is
+  paying for this, and whose transcripts is it landing in?" alarm, and the
+  Claude-side counterpart of an identity mismatch.
+
 ## Location terms
 
 - **Display path** — the human-facing location string shown for a directory:

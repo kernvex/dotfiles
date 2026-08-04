@@ -17,6 +17,11 @@ window may be independently absent. Handle absence, never assume presence.
 
 Schema: https://code.claude.com/docs/en/statusline
 
+Line two additionally leads with the CLAUDE SEAT — which account is answering —
+coloured by whether it agrees with the git identity of the folder you're standing
+in. See the `claude seat` section below and
+docs/superpowers/specs/2026-08-03-claude-seat-statusline-design.md.
+
 Side effect: throttled append of each sample to ~/.claude/usage-log.jsonl,
 building the history that makes week-over-week projection possible.
 """
@@ -65,6 +70,10 @@ def paint(code, text):
 
 DIM, BOLD = "2", "1"
 RED, YELLOW, GREEN, CYAN = "31", "33", "32", "36"
+# Basic ANSI throughout, so the terminal theme picks the hue. Bright blue rather
+# than blue because under Gruvbox the plain `36` used for the branch renders
+# green (#689d6a) and `34` is muddy next to DIM.
+BLUE = "94"
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -210,6 +219,124 @@ def render_sys():
     return "  ".join(parts) if parts else None
 
 
+# --- claude seat ------------------------------------------------------------
+#
+# Which account is answering? Claude Code picks it with CLAUDE_CONFIG_DIR, an
+# environment variable — invisible, sticky across a `cd`, and wrong exactly where
+# being wrong is expensive: company work billed to a personal subscription, or
+# personal work filed into an employer's transcripts.
+#
+# The check mirrors the git identity one directly below it. A folder covered by an
+# `includeIf gitdir:` rule is a company folder BY GIT'S OWN RULES, so the seat's
+# account is expected to match that folder's commit email. No identity, folder or
+# employer is named here; a second employer works the day it is added (ADR 0001).
+
+SEAT_GLYPH = "◈"
+
+# state -> colour. Three signals, three meanings, held to strictly:
+#   mismatch     RED     I know this is wrong.
+#   unverifiable YELLOW  I cannot check, and you're carrying a seat that isn't yours.
+#   neutral      DIM     Nothing to say.
+# which leaves BLUE meaning one thing only: a comparison ran and passed. If blue
+# also meant "no comparison happened" you could not tell a verified seat from an
+# unverified one at a glance.
+SEAT_COLORS = {
+    "verified": BLUE,
+    "mismatch": RED,
+    "unverifiable": YELLOW,
+    "neutral": DIM,
+}
+
+
+def seat_dir():
+    """(config dir, is_default, config file) for the seat this session is on.
+
+    Proven empirically: Claude Code spawns the status line with the launching
+    shell's environment intact — SHELL, TMUX and the shell-set PATH all arrive —
+    so CLAUDE_CONFIG_DIR set in fish reaches us here.
+
+    The config FILE is not simply `<config dir>/.claude.json`, and assuming it is
+    reads the wrong file for the machine owner. Verified against Claude Code
+    2.1.221 by pointing CLAUDE_CONFIG_DIR at an empty directory and watching what
+    landed:
+
+        CLAUDE_CONFIG_DIR set    ->  $CLAUDE_CONFIG_DIR/.claude.json
+        CLAUDE_CONFIG_DIR unset  ->  ~/.claude.json   (a SIBLING of ~/.claude)
+
+    So the file is keyed to whether the variable is set, while `is_default` is
+    keyed to where it points — a directory explicitly set to ~/.claude is still
+    the owner's seat, but its config lives at ~/.claude/.claude.json.
+    """
+    default = os.path.expanduser("~/.claude")
+    raw = os.environ.get("CLAUDE_CONFIG_DIR")
+    if not raw:
+        return default, True, os.path.expanduser("~/.claude.json")
+
+    path = os.path.abspath(os.path.expanduser(raw))
+    is_default = os.path.realpath(path) == os.path.realpath(default)
+    return path, is_default, os.path.join(path, ".claude.json")
+
+
+def seat_account(config_file):
+    """(email, tier) the seat last logged in as, or (None, None).
+
+    This is `oauthAccount` from the seat's own config file — 0.7 ms, and it
+    tracks a re-login. It is NOT Keychain truth; `claude auth status` is, and
+    that costs a Node cold start, which a line redrawn this often cannot pay.
+    """
+    try:
+        with open(config_file, encoding="utf-8") as fh:
+            account = json.load(fh).get("oauthAccount") or {}
+    except (OSError, ValueError):
+        return None, None
+
+    tier = account.get("organizationType") or None
+    if tier and tier.startswith("claude_"):
+        tier = tier[len("claude_"):]
+    return account.get("emailAddress") or None, tier
+
+
+def seat_state(is_default, seat_email, git):
+    """Which of the four states this session is in. See SEAT_COLORS."""
+    in_repo = bool(git and git.get("branch"))
+
+    if not in_repo:
+        # Routing is defined on git directories, so there is nothing to compare
+        # against — but a named seat out here is still worth marking.
+        return "neutral" if is_default else "unverifiable"
+
+    if not git.get("identity_routed"):
+        # A personal folder. The machine owner belongs here; anyone else is
+        # burning an employer's tokens on work that isn't theirs.
+        return "neutral" if is_default else "mismatch"
+
+    git_email = git.get("identity_email")
+    if not seat_email or not git_email:
+        return "unverifiable"
+    return "verified" if seat_email.casefold() == git_email.casefold() else "mismatch"
+
+
+def seat_label(config_dir, is_default, email, tier):
+    """What the segment reads. The account, or the directory when it can't be read."""
+    if email:
+        return f"{email} · {tier}" if tier else email
+
+    # No readable account: name the seat by its directory instead, so a broken
+    # read looks like a broken read rather than like an absent feature.
+    if is_default:
+        return "personal"
+    return os.path.basename(config_dir).removeprefix(".claude-")
+
+
+def render_seat(git):
+    """(painted segment, colour) for the head of line two."""
+    config_dir, is_default, config_file = seat_dir()
+    email, tier = seat_account(config_file)
+    color = SEAT_COLORS[seat_state(is_default, email, git)]
+    label = seat_label(config_dir, is_default, email, tier)
+    return paint(color, f"{SEAT_GLYPH} {label}"), color
+
+
 # --- git context (shared with the CLI `whereami` command) -------------------
 
 
@@ -236,7 +363,7 @@ def whereami(cwd):
         return None
 
 
-def render_git(info):
+def render_git(info, seat_color):
     """`branch* ☉ identity` for the tail of line two, or None outside a repo.
 
     Branch, tree state and committing identity all answer one question — what
@@ -244,6 +371,12 @@ def render_git(info):
     line. The `*` marks a dirty tree; the identity turns red on a mismatch,
     meaning you're about to commit as an identity the folder's includeIf
     routing says is wrong (whereami computes this).
+
+    The identity carries the SEAT's colour, so the two ends of the line either
+    agree or both shout. Two independent faults share this one colour slot — a
+    git mismatch (includeIf didn't fire) and a seat mismatch (wrong account) —
+    so the git one wins. Both are red, so nothing is ever lost: the older alarm
+    keeps working and the seat signal layers underneath it.
     """
     branch = info.get("branch")
     if not branch:
@@ -258,7 +391,7 @@ def render_git(info):
 
     identity = info.get("identity")
     if identity:
-        color = RED if info.get("identity_mismatch") else DIM
+        color = RED if info.get("identity_mismatch") else seat_color
         seg += "  " + paint(color, f"☉ {identity}")
     return seg
 
@@ -316,9 +449,11 @@ def main():
     cwd = (data.get("workspace") or {}).get("current_dir") or data.get("cwd")
     git = whereami(cwd)
 
-    # Line two: who am I talking to, how hard is it thinking, and where does it
-    # stand — path, branch, tree state, committing identity.
-    head = paint(BOLD, model)
+    # Line two: which account is answering, who am I talking to, how hard is it
+    # thinking, and where does it stand — path, branch, tree state, identity.
+    # The seat leads because it is the fact you cannot otherwise see.
+    seat_seg, seat_color = render_seat(git)
+    head = seat_seg + "  " + paint(BOLD, model)
     if effort:
         head += paint(DIM, f" · {effort}")
 
@@ -332,7 +467,7 @@ def main():
 
     # …then the branch, tree state and identity, completing the "where and whom".
     if git:
-        git_seg = render_git(git)
+        git_seg = render_git(git, seat_color)
         if git_seg:
             head += "  " + git_seg
 

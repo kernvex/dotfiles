@@ -1,7 +1,7 @@
 # Claude seat on the status line
 
 Date: 2026-08-03
-Status: approved, not yet implemented
+Status: ready-for-agent
 
 > **Placeholders only.** `CONTEXT.md` records that identity routing lives in
 > untracked machine-local config, "never in this public repo", and `origin` is
@@ -53,9 +53,24 @@ The segment is always present, including in the neutral case.
 | Fact | Read from |
 |---|---|
 | which seat is active | `$CLAUDE_CONFIG_DIR`, defaulting to `~/.claude` |
-| the seat's account and tier | `<config dir>/.claude.json` → `oauthAccount.emailAddress`, `.organizationType` |
+| the seat's account and tier | the seat's config file → `oauthAccount.emailAddress`, `.organizationType` |
 | the folder's git identity | `whereami --json` → `identity_email` (new) |
 | whether the folder is routed | `whereami --json` → `identity_routed` (new) |
+
+**The config file is not `<config dir>/.claude.json`.** Assuming it is reads the
+wrong path for the machine owner — silently, producing a correct colour beside a
+wrong label. Verified against Claude Code 2.1.221 by pointing
+`CLAUDE_CONFIG_DIR` at an empty directory and watching what landed in it:
+
+```
+CLAUDE_CONFIG_DIR set    ->  $CLAUDE_CONFIG_DIR/.claude.json
+CLAUDE_CONFIG_DIR unset  ->  ~/.claude.json   (a SIBLING of ~/.claude)
+```
+
+So the file is keyed to whether the variable is *set*, while `is_default` is
+keyed to where it *points*. A directory explicitly set to `~/.claude` is still
+the owner's seat, but its config then lives at `~/.claude/.claude.json`. The two
+questions are answered separately.
 
 Reading `oauthAccount` costs 0.7 ms, measured. The considered alternatives were a
 declarative seat map in this repo — rejected, it is a *claim* that goes stale
@@ -208,15 +223,21 @@ logs a directory into a different account this tracks it, which is the point, bu
 it is not Keychain truth. `claude auth status` is, and it is a second away rather
 than 0.7 ms away.
 
-## Gating assumption
+## Gating assumption — PROVEN
 
-The design rests on one unverified fact: **Claude Code spawns the status line
-with the session's `CLAUDE_CONFIG_DIR` in its environment.** It is very likely —
-the status line is a child of the same process the `Bash` tool is a child of, and
-that one carries the full session environment — but if it is false the seat is
-unreadable and nothing else here matters.
+The design rested on one unverified fact: **Claude Code spawns the status line
+with the session's `CLAUDE_CONFIG_DIR` in its environment.** If false, the seat
+would be unreadable and nothing else here would matter, so it was settled before
+any code was written.
 
-Proving it is step 1 of implementation, before anything else is written.
+Proven by dumping `os.environ` from inside a live status line render. It carries
+`SHELL=/opt/homebrew/bin/fish`, `STARSHIP_SHELL`, `FNM_DIR`, `TMUX`,
+`__CFBundleIdentifier` (WezTerm) and a fish-set `fnm_multishells` entry on
+`PATH` — none of which Claude Code injects. The status line therefore inherits
+the launching shell's environment wholesale, so `CLAUDE_CONFIG_DIR` exported in
+fish reaches it. Of 89 variables shared with a `Bash` tool call in the same
+session, 78 were identical; all 11 that differed were per-process (`PID`, `PWD`,
+`TERM`, session IDs).
 
 ## Verification
 
@@ -233,17 +254,24 @@ row of the state table.
   *unverifiable* branch that the cross does not reach. Each gets a fixture
   payload piped to `statusline-pace.py`; the assertion is the ANSI code on the
   seat segment.
+- An eighth case asserts the **label**, not the colour: that the default seat
+  resolves a real account rather than the directory fallback. It exists because
+  the config-file mistake above produced the right colour beside the wrong text,
+  so no colour assertion in the table could catch it.
 
 Real accounts, real addresses and real folder names stay out of it: the routed
 folder is discovered by asking git for its own `includeIf` rules, not by naming
 one.
+
+Lives at `claude/.claude/test-statusline-seat.py`. Run it with
+`python3 claude/.claude/test-statusline-seat.py`; exit 0 means every row passed.
 
 ## Documents
 
 - **`CONTEXT.md`** — glossary entries in the existing *Identity terms* block:
   *seat*, *default seat*, *named seat*, *seat account*, *seat mismatch*.
   Definitions only; it is a glossary.
-- **`docs/adr/0007-the-status-line-reads-the-seat-from-its-config-dir.md`** — reading `oauthAccount` from the config directory rather
+- **`docs/adr/0007-the-status-line-reads-the-seat-from-its-config-file.md`** — reading `oauthAccount` from the config directory rather
   than asking `claude auth status`. Surprising without context (it is not
   Keychain truth), chosen against a real alternative, and precisely what a future
   reader would "fix" by shelling out to `claude`, discovering the one-second cost
