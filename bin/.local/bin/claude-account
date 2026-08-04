@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""claude-account — print the account the current Claude Code seat answers as.
+
+    claude-account          ->  someone@example.com
+    not logged in           ->  nothing, exit 1
+
+WHY THIS EXISTS: `identity check --deep` verifies a routed CLI by running one
+command per tool and comparing its single line of output against the account
+that identity declares. Those commands live in a pipe-delimited registry table,
+so a command containing a pipe cannot be written there at all. Every other
+routed tool has a flag that narrows its output to one field — `gh --jq`,
+`gcloud --format=value(...)`, `az --query -o tsv`, `aws --query --output text`.
+Claude Code has `--json` and nothing narrower, so the pipe lives here instead.
+
+WHY IT ASKS THE CLI rather than reading the seat's `.claude.json`: the statusline
+already reads `oauthAccount` out of that file, because a line redrawn several
+times a second cannot pay for a Node cold start. This is the opposite trade. A
+deep check is the one place that should ask the tool itself, since the config
+file records the account that logged in last and the Keychain records the one
+that will actually answer — and a check that reads the cache cannot see them
+disagree.
+
+The seat is chosen by CLAUDE_CONFIG_DIR, read by Claude Code itself and not by
+this script, so a caller selects a seat by setting the same variable the folder
+hooks set. That is what makes this usable as a registry verify command.
+"""
+
+import json
+import subprocess
+import sys
+
+
+def main():
+    try:
+        proc = subprocess.run(
+            ["claude", "auth", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        print("claude-account: claude is not on PATH", file=sys.stderr)
+        return 1
+    except subprocess.TimeoutExpired:
+        print("claude-account: `claude auth status` timed out", file=sys.stderr)
+        return 1
+
+    try:
+        status = json.loads(proc.stdout)
+    except ValueError:
+        # Print nothing on stdout. A caller comparing this against an expected
+        # account must see an empty answer, never a diagnostic that could be
+        # mistaken for one.
+        print("claude-account: could not parse `claude auth status --json`", file=sys.stderr)
+        return 1
+
+    email = status.get("email")
+    if not status.get("loggedIn") or not email:
+        print("claude-account: this seat is not logged in", file=sys.stderr)
+        return 1
+
+    print(email)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
