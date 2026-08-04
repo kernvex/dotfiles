@@ -6,7 +6,13 @@
 # recognition failures + slow startups (anthropics/claude-code#3575, #40857).
 # README.md is documentation.
 #
+# Tests and their bytecode are developed here but never belong in ~/.claude:
+# stow reads the filesystem, not .gitignore, so an untracked __pycache__ would
+# be linked out too.
+#
 # NOTE: defining this file replaces stow's built-in default ignore list, so the
 # README pattern must be repeated here.
 settings\.json
 README.*
+test-.*\.py
+__pycache__
