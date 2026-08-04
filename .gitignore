@@ -10,3 +10,7 @@ __pycache__/
 # fish runtime-generated (should never land here with --no-folding, but be safe)
 fish/.config/fish/completions/
 fish/.config/fish/functions/
+# issues, wayfinder maps and working notes (see docs/agents/issue-tracker.md).
+# Specs are NOT here — they live committed in docs/superpowers/specs/, because
+# publishing one under this path would silently untrack it.
+.scratch/
