@@ -14,7 +14,7 @@ details, no decisions (those live in `docs/adr/`).
   `~/.gitconfig` (`kernvex`). Applies wherever no `includeIf` rule takes over.
 
 - **Routed identity** — an identity supplied by an `[includeIf "gitdir:…"]` rule
-  (e.g. company `josh-y8` for repos under the Bench folder). The routing rules
+  (e.g. a company account for repos under that company's folder). The routing rules
   themselves live in machine-local, untracked config (`~/.config/git/local.inc`),
   never in this public repo.
 
@@ -58,7 +58,7 @@ details, no decisions (those live in `docs/adr/`).
 - **Display path** — the human-facing location string shown for a directory:
   - not in a git repo → the leaf directory name;
   - at a repo root → `<parent-dir>/<repo-name>` (e.g. `kernvex/dotfiles`), so the
-    surrounding "world" (personal `kernvex` vs company `Bench`) stays visible;
+    surrounding "world" (personal `kernvex` vs a client folder) stays visible;
   - nested inside a repo → `<repo-name>/<path-within-repo>`.
 
 ## Session terms

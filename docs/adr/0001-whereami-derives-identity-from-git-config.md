@@ -2,10 +2,14 @@
 
 `whereami` colors the active commit identity red when it mismatches what a
 directory *should* commit as. Computing "should" needs a folder→identity map —
-but this machine deliberately keeps company identity (the `Bench/` path, the
-`josh-y8` name/email) out of the public dotfiles repo, routed instead through a
-machine-local `~/.config/git/local.inc` → `benchmark.inc` `includeIf` chain (see
-`git-ssh-identities`). `whereami` lives in the public `bin/` package.
+but this machine deliberately keeps company identity — the client folder path,
+the company name and email — out of the public dotfiles repo, routed instead
+through a machine-local `~/.config/git/local.inc` → `<company>.inc` `includeIf`
+chain (see `git-ssh-identities`). `whereami` lives in the public `bin/` package.
+
+That constraint applies to this document too. An ADR explaining why a client
+relationship is kept out of a public repo is a poor place to name one, and this
+one did for months.
 
 **Decision:** derive the expected identity by enumerating git's own `includeIf
 gitdir` rules at runtime (`git config -l --show-origin` surfaces each rule as a

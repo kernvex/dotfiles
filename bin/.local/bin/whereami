@@ -71,8 +71,9 @@ def display_path(cwd, toplevel):
     repo = os.path.basename(top_real)
 
     if os.path.realpath(cwd) == top_real:
-        # At the root: show one directory above so the world (kernvex vs Bench)
-        # stays visible. `parent` is empty only if the repo sits at "/".
+        # At the root: show one directory above so the world (personal vs a
+        # client folder) stays visible. `parent` is empty only if the repo
+        # sits at "/".
         parent = os.path.basename(os.path.dirname(top_real))
         return f"{parent}/{repo}" if parent else repo
 
@@ -85,10 +86,12 @@ def display_path(cwd, toplevel):
 # `git config -l --show-origin` lists every includeIf rule as a literal key even
 # when its condition did not fire, e.g.
 #
-#   file:~/.config/git/local.inc  includeif.gitdir:~/Documents/Projects/Bench/.path=~/.config/git/benchmark.inc
+#   file:~/.config/git/local.inc  includeif.gitdir:~/work/Acme/.path=~/.config/git/acme.inc
 #
 # We read the gitdir condition from the key and the routed identity from the
-# target file — so no folder or name is ever hardcoded here.
+# target file — so no folder or name is ever hardcoded here. That includes this
+# comment: the example above is a placeholder, not a real client, because this
+# file is published.
 
 
 def _parse_includeif_rules():
