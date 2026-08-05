@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""nuget-account — print the GitHub account the NuGet credentials in THIS
+directory actually authenticate as.
+
+    cd ~/work/SomeClient && nuget-account   ->  their-github-login
+    no credentialed GitHub feed here        ->  nothing, exit 1
+
+WHY THIS EXISTS: `identity check --deep` verifies a routed tool by running one
+command per tool and comparing its single line of output against the account
+that identity declares. Those commands live in a pipe-delimited registry table,
+so a command containing a pipe cannot be written there at all — the same reason
+`claude-account` exists next to this file.
+
+WHY IT ASKS GITHUB rather than reporting the configured Username: GitHub
+Packages ignores the username field entirely. Any string authenticates as long
+as the token is valid, and every published example puts something arbitrary
+there. So echoing that field back would verify nothing at all — it would compare
+a value in a file against a value in another file and call it a deep check. The
+token is the credential, so the token is what gets asked about, and the answer
+comes from GitHub.
+
+WHY IT RE-IMPLEMENTS NuGet'S CONFIG MERGE: because the merge IS the routing.
+NuGet has no environment variable for its config, so an identity is selected by
+which directory the command runs in: it loads the user-level config, then every
+NuGet.Config from the filesystem root down to the current folder, with the
+closest definition winning. `dotnet nuget list source` will name the sources but
+never prints credentials, so there is no way to ask the tool this question. The
+merge implemented below is the documented one, and nothing more.
+
+Prints nothing on stdout when it cannot answer. A caller comparing this against
+an expected account must see an empty answer, never a diagnostic that could be
+mistaken for one.
+"""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+GITHUB_PACKAGES_HOST = "nuget.pkg.github.com"
+API_USER = "https://api.github.com/user"
+TIMEOUT = 15
+
+
+def config_chain(start: Path) -> list[Path]:
+    """Every NuGet config that applies in `start`, furthest-first.
+
+    User-level first, then root -> start, which is NuGet's documented order and
+    therefore the order in which later files override earlier ones. Both
+    user-level locations are included because the .NET CLI reads ~/.nuget/NuGet
+    while Mono and NuGet.exe read ~/.config/NuGet, and a machine can have either.
+    """
+    home = Path.home()
+    chain = [
+        home / ".config" / "NuGet" / "NuGet.Config",
+        home / ".nuget" / "NuGet" / "NuGet.Config",
+    ]
+    # Ancestors, root first. The filesystem here is case-insensitive, but do not
+    # rely on that: check both spellings that appear in the wild.
+    for parent in reversed([start, *start.parents]):
+        for name in ("NuGet.Config", "nuget.config"):
+            candidate = parent / name
+            if candidate.is_file() and candidate not in chain:
+                chain.append(candidate)
+    return [p for p in chain if p.is_file()]
+
+
+def merge(paths: list[Path]) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    """Collapse the chain into (sources, credentials), closest definition winning."""
+    sources: dict[str, str] = {}
+    creds: dict[str, dict[str, str]] = {}
+    for path in paths:
+        try:
+            root = ET.parse(path).getroot()
+        except (ET.ParseError, OSError):
+            # NuGet silently ignores a config file containing malformed XML, so
+            # a parse failure is a real state the tool can be in, not an
+            # exceptional one. Say so, and keep going with the rest of the chain.
+            print(f"nuget-account: {path} is not parseable XML — NuGet ignores it too",
+                  file=sys.stderr)
+            continue
+
+        section = root.find("packageSources")
+        if section is not None:
+            if section.find("clear") is not None:
+                sources.clear()
+            for add in section.findall("add"):
+                key, value = add.get("key"), add.get("value")
+                if key and value:
+                    sources[key] = value
+
+        section = root.find("packageSourceCredentials")
+        if section is not None:
+            if section.find("clear") is not None:
+                creds.clear()
+            for source in section:
+                entry = {
+                    add.get("key"): add.get("value", "")
+                    for add in source.findall("add")
+                    if add.get("key")
+                }
+                # The element TAG is the source name, and NuGet escapes characters
+                # that are illegal in XML names as _xHHHH_.
+                creds[unescape_name(source.tag)] = entry
+    return sources, creds
+
+
+def unescape_name(tag: str) -> str:
+    out, i = [], 0
+    while i < len(tag):
+        if tag[i] == "_" and tag[i + 1 : i + 2] == "x" and tag[i + 6 : i + 7] == "_":
+            try:
+                out.append(chr(int(tag[i + 2 : i + 6], 16)))
+                i += 7
+                continue
+            except ValueError:
+                pass
+        out.append(tag[i])
+        i += 1
+    return "".join(out)
+
+
+def github_token(sources: dict[str, str], creds: dict[str, dict[str, str]]) -> str | None:
+    """The token for the GitHub Packages feed configured here, if there is one."""
+    for name, url in reversed(list(sources.items())):
+        if GITHUB_PACKAGES_HOST not in url:
+            continue
+        entry = creds.get(name)
+        if not entry:
+            print(f"nuget-account: source '{name}' has no credentials configured",
+                  file=sys.stderr)
+            continue
+        token = entry.get("ClearTextPassword")
+        if token:
+            return token
+        if entry.get("Password"):
+            # NuGet's encrypted form is Windows DPAPI. On macOS it cannot be
+            # read back at all, by this script or by NuGet itself.
+            print(f"nuget-account: source '{name}' uses an encrypted Password, "
+                  "which is Windows-only — it needs ClearTextPassword here",
+                  file=sys.stderr)
+    return None
+
+
+def main() -> int:
+    here = Path(os.getcwd()).resolve()
+    sources, creds = merge(config_chain(here))
+
+    token = github_token(sources, creds)
+    if not token:
+        print(f"nuget-account: no credentialed {GITHUB_PACKAGES_HOST} source "
+              f"applies in {here}", file=sys.stderr)
+        return 1
+
+    request = urllib.request.Request(
+        API_USER,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "nuget-account",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            login = json.load(response).get("login")
+    except urllib.error.HTTPError as err:
+        print(f"nuget-account: GitHub rejected the token ({err.code}) — it may be "
+              "expired, revoked, or missing read:packages", file=sys.stderr)
+        return 1
+    except (urllib.error.URLError, TimeoutError, ValueError) as err:
+        print(f"nuget-account: could not reach GitHub ({err})", file=sys.stderr)
+        return 1
+
+    if not login:
+        print("nuget-account: GitHub returned no login for this token", file=sys.stderr)
+        return 1
+
+    print(login)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
