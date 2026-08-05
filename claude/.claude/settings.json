@@ -27,7 +27,7 @@
     }
   },
   "effortLevel": "high",
-  "tui": "fullscreen",
+  "tui": "default",
   "skipWorkflowUsageWarning": true,
   "permissions": {
     "defaultMode": "auto",
