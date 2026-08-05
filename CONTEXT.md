@@ -91,6 +91,53 @@ details, no decisions (those live in `docs/adr/`).
   in. What the picker means by a candidate regardless of how the line reads, so that
   jumping to one and copying one are the same question answered twice.
 
+## Window navigation terms
+
+- **Slot** — a digit 0–9 that permanently names one destination, reached by holding
+  Hyper and pressing it. A slot's meaning is fixed: it points at the same place after a
+  restart, after the thing it names has been closed, and after that thing has been
+  renamed. The same idea as a harpoon mark, a tmux window index or a WezTerm tab number,
+  raised to the level of macOS windows.
+
+- **Slot table** — the mapping from each slot to what it names. Machine-local and never
+  committed: it carries real account labels, and the profile directories it refers to
+  denote different people on different machines, so a shared copy would be both a leak
+  and wrong on arrival.
+
+- **Target** — what a slot names. Either an *application*, where any window of that app
+  will do, or a *browser identity*, where one profile's window is the only acceptable
+  answer.
+
+- **Browser identity** — a single Chrome profile, treated as its own destination even
+  though every profile on the machine runs inside one Chrome process. The reason
+  application-level switching is not enough: "go to Chrome" is ambiguous across four
+  windows signed into four accounts, and those accounts cannot be merged.
+
+- **Profile directory** — Chrome's durable identifier for a profile (`Default`,
+  `Profile 70`). Never changes, and means nothing to a human. What the slot table stores.
+
+- **Profile name** — the label a profile shows in Chrome's interface, editable at any
+  moment. What a human recognises, and therefore unusable as an identifier.
+
+- **Profile signature** — the tail a Chrome window title carries to say which profile
+  owns the window. Built from the profile name and the signed-in account, so it moves
+  when either does, and it cannot be read backwards: two profiles can produce
+  identically shaped signatures that decompose differently. A signature is something to
+  predict and compare against, never to parse.
+
+- **Reachable window** — a window on the currently active Desktop. Only reachable
+  windows can be found or focused; a window one Desktop away is not slow to reach but
+  absent altogether, whether it is full-screen or perfectly ordinary. This is why every
+  window a slot can reach shares a single Desktop.
+
+- **Pinning** — binding a slot to the browser identity of the window in front of you,
+  instead of writing the slot table by hand. How the table comes into existence on a new
+  machine, and the reason nobody has to look up profile directory numbers.
+
+- **Adoption** — a slot claiming a window it did not itself open, by recognising the
+  window's signature. What keeps a slot honest when you open a window from Chrome's own
+  profile menu rather than by pressing the key.
+
 ## Teaching terms
 
 - **Teaching workspace** — a directory that *is* a course: a `MISSION.md` saying why

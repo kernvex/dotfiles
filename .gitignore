@@ -10,6 +10,12 @@ __pycache__/
 # fish runtime-generated (should never land here with --no-folding, but be safe)
 fish/.config/fish/completions/
 fish/.config/fish/functions/
+# The slot table names real accounts and is machine-local by design; it lives at
+# ~/.hammerspoon/slot-table.lua and never here. Listed anyway so that a stray copy
+# into the package directory cannot be committed by accident. The tracked
+# documentation of the format is slot-table.example.lua, which uses invented names.
+hammerspoon/.hammerspoon/slot-table.lua
+
 # issues, wayfinder maps and working notes (see docs/agents/issue-tracker.md).
 # Specs are NOT here — they live committed in docs/superpowers/specs/, because
 # publishing one under this path would silently untrack it.

@@ -63,6 +63,23 @@ set_default NSGlobalDomain KeyRepeat -int 2
 # InitialKeyRepeat floor above.
 set_default NSGlobalDomain ApplePressAndHoldEnabled -bool false
 
+# ---------------------------------------------------------------------------
+# Desktops
+#
+# Window slots address a window by asking the Accessibility interface for it, and
+# that interface reports only the Desktop that is active right now — a window one
+# Desktop away is absent, not merely slower to reach (ADR 0009). So the slots
+# assume a single Desktop, and a Desktop order that reshuffles itself underneath
+# that assumption is exactly the positional instability the slots exist to escape.
+#
+# Off by default here, on by default in macOS, so this line is load-bearing.
+mru_before="$(defaults read com.apple.dock mru-spaces 2>/dev/null || true)"
+set_default com.apple.dock mru-spaces -bool false
+if [ "$mru_before" != "0" ]; then
+  killall Dock 2>/dev/null || true
+  echo "restarted Dock to apply mru-spaces"
+fi
+
 if [ "$changed" -eq 1 ]; then
   echo "NOTE: key repeat changes apply to newly launched apps; log out and back in for a full effect."
 fi

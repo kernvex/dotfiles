@@ -40,6 +40,7 @@ Requires `stow` (`brew install stow`). The wider machine bootstrap — Homebrew,
 | `claude` | `~/.claude/statusline-pace.py`, `CLAUDE.md`, `templates/` (symlinks); `settings.json` is **copied** by `install`, not stowed — see `claude/README.md` |
 | `obsidian` | **copied** by `install` into each vault's `.obsidian/` (one subdir per vault: `habits/`, `lingo/` — config + pinned plugins), not stowed — see `obsidian/README.md`. Pairs with the `obsidian-habit-tracker` / `obsidian-lingo` esetup submodules. |
 | `ssh` | `~/.ssh/config` (personal github.com default; **no** private keys — company keys route per-folder via git `includeIf`) |
+| `hammerspoon` | `~/.hammerspoon` (the window-slot engine `Hyper+<digit>` calls into — see ADR 0009). The slot table itself is `~/.hammerspoon/slot-table.lua`, machine-local and **never committed**: it names real accounts. `slot-table.example.lua` documents the format; you write the real one by pinning, not by hand. |
 
 **Submodules**
 
