@@ -86,6 +86,11 @@ details, no decisions (those live in `docs/adr/`).
   tmux session shown as `[TMUX] <name>`. The current session is never a candidate —
   you cannot jump to where you already are.
 
+- **Candidate path** — the absolute directory a session candidate stands for: the
+  walked directory itself, or, for a live session, the directory that session works
+  in. What the picker means by a candidate regardless of how the line reads, so that
+  jumping to one and copying one are the same question answered twice.
+
 ## Teaching terms
 
 - **Teaching workspace** — a directory that *is* a course: a `MISSION.md` saying why
