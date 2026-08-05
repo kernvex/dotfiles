@@ -33,6 +33,25 @@ format = "⌛️[$duration](bold yellow)"
 [aws]
 disabled = true
 
+# Speak only where a gcloud identity is actually routed.
+#
+# By default this module renders wherever it can read an active gcloud config,
+# and the personal one qualifies: ~/.config/gcloud/active_config names "default"
+# while configurations/config_default is an EMPTY file. So the module found a
+# config, parsed no account out of it, and drew a bare ☁ with nothing after it —
+# in every unrouted folder, which is most of them.
+#
+# CLOUDSDK_CONFIG is set per-directory by the identity routing hook, and only for
+# an identity that declares gcloud. Keying the module to it means the segment says
+# what it means: a cloud identity is in force here, and this is who. Elsewhere it
+# stays quiet rather than showing a symbol for an account that does not exist.
+#
+# Trade-off: a personal `gcloud auth login` would go unshown, since personal has
+# no generated config dir. That is the identity model's own rule — the folder is
+# the switch — not an oversight.
+[gcloud]
+detect_env_vars = ["CLOUDSDK_CONFIG"]
+
 # Git
 [git_branch]
 style = "fg:white bg:black"
