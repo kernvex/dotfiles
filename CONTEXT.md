@@ -59,7 +59,17 @@ details, no decisions (those live in `docs/adr/`).
   - not in a git repo → the leaf directory name;
   - at a repo root → `<parent-dir>/<repo-name>` (e.g. `kernvex/dotfiles`), so the
     surrounding "world" (personal `kernvex` vs a client folder) stays visible;
-  - nested inside a repo → `<repo-name>/<path-within-repo>`.
+  - nested inside a repo → `<repo-name>/<path-within-repo>`;
+  - inside a linked worktree → anchored on the **owning repo** rather than on the
+    worktree, which is a repo root in its own right and would otherwise show only
+    its scaffolding (`.worktrees/feature`). The world and the owning repo lead at
+    every depth, so the repo the work belongs to can never scroll out of the
+    string. A worktree parked outside its repo keeps both ends and elides the
+    journey between them with a single `…`.
+
+- **Owning repo** — for a linked worktree, the repo it was created from: the one
+  whose history a commit there lands in. Distinct from the directory the worktree
+  sits in, which is scaffolding and may be anywhere on disk.
 
 ## Session terms
 

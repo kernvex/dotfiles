@@ -363,6 +363,35 @@ def whereami(cwd):
         return None
 
 
+def render_path(path, repo):
+    """The display path, dim, with the repo's own segment left at normal weight.
+
+    A path anchored on the owning repo is long — `projects/webapp/.worktrees/
+    feature` — and uniformly dim it reads as one grey run in which the repo is
+    exactly as findable as the scaffolding around it. Undimming that one segment
+    gives the eye somewhere to land.
+
+    Deliberately no colour: every hue in this file already carries a meaning
+    (see SEAT_COLORS), and a second meaning for any of them would cost more than
+    this is worth. Normal-vs-dim is the one axis still free.
+    """
+    if not repo:
+        return paint(DIM, path)
+
+    segments = path.split("/")
+    if repo not in segments:
+        return paint(DIM, path)
+
+    i = segments.index(repo)
+    before, after = "/".join(segments[:i]), "/".join(segments[i + 1:])
+
+    out = paint(DIM, before + "/") if before else ""
+    out += repo
+    if after:
+        out += paint(DIM, "/" + after)
+    return out
+
+
 def render_git(info, seat_color):
     """`branch* ☉ identity` for the tail of line two, or None outside a repo.
 
@@ -463,7 +492,7 @@ def main():
     if not path and cwd:
         path = os.path.basename(cwd)
     if path:
-        head += paint(DIM, f"  {path}")
+        head += "  " + render_path(path, (git or {}).get("repo"))
 
     # …then the branch, tree state and identity, completing the "where and whom".
     if git:

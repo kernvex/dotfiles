@@ -13,6 +13,7 @@ It answers three questions:
                   not a repo      → the leaf directory name
                   at a repo root  → <parent>/<repo>   e.g. kernvex/dotfiles
                   nested          → <repo>/<within>    e.g. dotfiles/claude/.claude
+                  linked worktree → anchored on the OWNING repo, see display_path
   What state?   Current branch (short SHA if detached) and whether the working
                 tree is dirty.
   As whom?      The EFFECTIVE commit identity (`git config user.name`, which
@@ -26,7 +27,7 @@ any uncertainty reports no mismatch rather than a false alarm.
 
 Usage:
   whereami           labeled human block
-  whereami --json    {"path","branch","dirty","identity","identity_mismatch"}
+  whereami --json    {"path","repo","branch","dirty","identity","identity_mismatch"}
 """
 
 import json
@@ -60,25 +61,83 @@ def git(*args, cwd=None):
 # --- location ---------------------------------------------------------------
 
 
-def display_path(cwd, toplevel):
-    """Human location string per the repo/root/nested rule (see module docstring)."""
+def main_worktree(cwd):
+    """Absolute path of this repo's MAIN worktree, or None if it can't be read.
+
+    The first `worktree ` line of `git worktree list --porcelain` is the main one;
+    the linked checkouts follow. Called only when a linked worktree was detected,
+    so the common case pays nothing for it.
+
+    Deriving the repo from `--git-common-dir` instead would be free — it is already
+    fetched — but it assumes the common dir is literally `<repo>/.git`, which is
+    false twice over: a bare repo's is `<repo>.git`, and a worktree belonging to a
+    SUBMODULE has `<super>/.git/modules/<name>`, whose parent is the directory
+    "modules". Both would print a confident wrong answer. This one asks git.
+    """
+    listing = git("worktree", "list", "--porcelain", cwd=cwd)
+    if not listing:
+        return None
+    first = listing.splitlines()[0]
+    return first[len("worktree "):] if first.startswith("worktree ") else None
+
+
+def display_path(cwd, toplevel, main_root=None):
+    """Human location string (see module docstring).
+
+    `main_root` is the owning repo's main worktree, passed only when cwd is inside
+    a LINKED worktree. That case gets its own rule, because the ordinary one fails
+    it badly: a linked checkout IS a repo root, so `<parent>/<repo>` renders the
+    worktree scaffolding — `.worktrees/feature` — and never names the repo the work
+    belongs to. Anchoring on the owning repo instead (names below are placeholders,
+    per the note on publication further down this file):
+
+        projects/webapp/.worktrees/feature               at the worktree root
+        projects/webapp/.worktrees/feature/src/handlers  nested inside it
+
+    which is the same "parent, repo, then where you stand" shape as the main-tree
+    rules, and cannot lose the repo however deep you descend. The world segment is
+    kept at every depth here, unlike the nested main-tree rule that drops it: there
+    the repo leads the string, whereas in a worktree it sits second either way, so
+    dropping the parent would buy width and cost the world.
+
+    A worktree parked OUTSIDE its repo (`git worktree add /tmp/x`) has no such
+    relative path — only a `../..` chain, which counts as segments while carrying
+    no meaning. That collapses to a single `…`:
+
+        projects/webapp/…/tmp/wt-feature
+    """
     if not toplevel:
         # Outside any repo: just the leaf. Guard the filesystem-root edge case
         # where basename is empty.
         return os.path.basename(cwd) or cwd
 
     top_real = os.path.realpath(toplevel)
-    repo = os.path.basename(top_real)
+    cwd_real = os.path.realpath(cwd)
+    repo_root = os.path.realpath(main_root) if main_root else top_real
 
-    if os.path.realpath(cwd) == top_real:
+    def anchored(root):
+        """`<parent>/<leaf>` for a root — the world it sits in, plus its name."""
+        leaf = os.path.basename(root)
+        parent = os.path.basename(os.path.dirname(root))
+        return f"{parent}/{leaf}" if parent else leaf
+
+    if repo_root != top_real:
+        head = anchored(repo_root)
+        if cwd_real == repo_root or cwd_real.startswith(repo_root + os.sep):
+            return f"{head}/{os.path.relpath(cwd_real, repo_root)}"
+        # Parked elsewhere: elide the journey, keep the destination.
+        tail = anchored(top_real)
+        if cwd_real != top_real:
+            tail += "/" + os.path.relpath(cwd_real, top_real)
+        return f"{head}/…/{tail}"
+
+    if cwd_real == top_real:
         # At the root: show one directory above so the world (personal vs a
-        # client folder) stays visible. `parent` is empty only if the repo
-        # sits at "/".
-        parent = os.path.basename(os.path.dirname(top_real))
-        return f"{parent}/{repo}" if parent else repo
+        # client folder) stays visible.
+        return anchored(top_real)
 
-    within = os.path.relpath(os.path.realpath(cwd), top_real)
-    return f"{repo}/{within}"
+    within = os.path.relpath(cwd_real, top_real)
+    return f"{os.path.basename(top_real)}/{within}"
 
 
 # --- identity mismatch ------------------------------------------------------
@@ -205,7 +264,8 @@ def gather():
     toplevel = lines[0] if len(lines) > 0 else None
 
     info = {
-        "path": display_path(cwd, toplevel),
+        "path": None,
+        "repo": None,
         "branch": None,
         "dirty": False,
         "worktree": False,
@@ -215,6 +275,7 @@ def gather():
         "identity_mismatch": False,
     }
     if not toplevel:
+        info["path"] = display_path(cwd, None)
         return info
 
     gitdir = lines[1] if len(lines) > 1 else None
@@ -223,6 +284,13 @@ def gather():
     # the repo's shared common dir; the main worktree has them equal.
     if gitdir and commondir:
         info["worktree"] = os.path.realpath(gitdir) != os.path.realpath(commondir)
+
+    # The owning repo, which is the worktree's own root only when this IS the main
+    # tree. Resolved before the path, since the path is anchored on it.
+    main_root = main_worktree(cwd) if info["worktree"] else None
+    info["path"] = display_path(cwd, toplevel, main_root)
+    info["repo"] = os.path.basename(os.path.realpath(main_root or toplevel)) or None
+
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd)
     if branch is None:  # unborn branch (no commits): the ref name still exists
         branch = git("symbolic-ref", "--short", "HEAD", cwd=cwd)
