@@ -92,6 +92,17 @@ return {
 
   native_macos_fullscreen_mode = true,
 
+  -- No tab bar. tmux is the multiplexer here, and the bar's titles were actively
+  -- misleading: tmux does not forward a title change outward, so each tab kept the
+  -- path its shell started in while the sessionizer moved you somewhere else.
+  --
+  -- Nothing is lost but the strip itself. Tab switching is unaffected — WezTerm's
+  -- macOS defaults already mirror Chrome (CMD+t new, CMD+w close, CMD+1..8 by
+  -- index, CMD+9 last), and CMD+SHIFT+T below lists the tabs when you want to see
+  -- them. The session name still reaches the macOS window title, via `set-titles`
+  -- in .tmux.conf.
+  enable_tab_bar = false,
+
   initial_cols = 150,
   initial_rows = 50,
 
