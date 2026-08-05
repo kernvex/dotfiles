@@ -37,6 +37,34 @@ claude-settings-sync    # copies ~/.claude/settings.json → this repo, shows th
 
 then review and `git commit`. (`claude-settings-sync` lives in the `bin` package.)
 
+## Work seats (`work-seat/`)
+
+`~/.claude` is the **personal** seat. Every client identity gets its own at
+`~/.claude-<slug>`, because the config dir is part of the address of the login —
+the Keychain item is namespaced by that path, so a seat is not a setting but a
+separate installation.
+
+A seat created by `claude auth login` starts almost empty: no status line, no
+plugins, no `CLAUDE.md`. `work-seat/` is the template that fixes that, and
+`identity apply` seeds it into every seat directory it creates.
+
+| entry | kind | why |
+|---|---|---|
+| `settings.json` | file | The work profile: status line, model, and the `disable*` flags that keep a client seat off connectors, remote control and workflows |
+| `CLAUDE.md` | relative symlink | Global instructions apply to client work too — one file, not a copy that drifts |
+| `plugins` | relative symlink | Plugin installs are large and identical per seat; sharing them avoids re-downloading a marketplace per client |
+
+The two symlinks are **relative** (`../.claude/x`) deliberately. Inside
+`~/.claude-<slug>/` that resolves to `~/.claude/x` on any machine and under any
+username, where an absolute link breaks the moment `$HOME` differs. The same
+relative path also resolves inside this repo, since `claude/` contains
+`.claude/` — so they are not dangling links in git either.
+
+Seeding **never overwrites**. An entry already present in a seat is left alone,
+for the same reason `settings.json` is copied rather than symlinked here: Claude
+rewrites it at runtime, and an `apply` that clobbered it would silently revert
+every `/model` switch made in that seat.
+
 ## Not tracked on purpose
 
 `~/.claude/settings.local.json` — machine-local `permissions.allow` entries

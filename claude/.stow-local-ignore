@@ -10,9 +10,15 @@
 # stow reads the filesystem, not .gitignore, so an untracked __pycache__ would
 # be linked out too.
 #
+# work-seat/ is the TEMPLATE for a per-client Claude seat, seeded into
+# ~/.claude-<slug> by `identity apply`. It must never be linked into $HOME:
+# stowing it would create a stray ~/work-seat, and what it describes is not this
+# machine's default seat but every OTHER one.
+#
 # NOTE: defining this file replaces stow's built-in default ignore list, so the
 # README pattern must be repeated here.
 settings\.json
 README.*
 test-.*\.py
 __pycache__
+work-seat
