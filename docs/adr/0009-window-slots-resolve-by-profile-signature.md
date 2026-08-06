@@ -15,8 +15,8 @@ at that instant. Earlier, AppleScript reported four Chrome windows where the Acc
 layer reported two. The limit is not a full-screen quirk: two ordinary maximised windows moved
 one Desktop across, sitting at `0,30,1920,1080` with the menu bar showing, were equally
 invisible. A window on another Desktop is not expensive to reach, it does not exist. Native
-full-screen also costs a ~600 ms Desktop transition against 14 ms for a focus on the active
-Desktop, but that was the smaller objection.
+full-screen also costs a ~600 ms Desktop transition against ~48 ms for the whole keypress on
+the active Desktop, but that was the smaller objection.
 
 **A signature can be predicted, never parsed.** Chrome does put the profile in the window
 title, but only in the Accessibility layer — AppleScript's `name of window` returns the tab
@@ -43,9 +43,22 @@ use rather than recorded.
 
 **Decision.** Karabiner keeps ownership of the keyboard — Hyper is a Karabiner variable that
 emits no modifiers, so no other program can observe it — and each slot fires a `shell_command`
-calling `hs -c` into a Hammerspoon engine. Measured, that hop is 4.5 ms and a window focus is
-14 ms, together under one frame at 60 Hz; a synthesised-chord bridge would have saved a
-millisecond nobody can perceive at the cost of splitting the mapping across two programs. A
+calling `hs -c` into a Hammerspoon engine.
+
+The design was chosen on a predicted ~18 ms, from timing the `hs -c` hop (4.5 ms) and a focus
+on an already-held window (14 ms) separately. That prediction was wrong, and the components
+were the reason: the first end-to-end measurement was **88 ms**. Half of it was one line —
+`hs.window.get(id)`, which re-enumerates every window to find one by identifier and costs
+~30 ms on its own, having just been handed that very window during enumeration. Passing the
+handle through instead brought a keypress to **~48 ms** (32–69 ms over twelve alternating
+jumps): ~6 ms to spawn `hs`, ~10 ms to enumerate windows, ~1 ms for the cached profile
+registry, ~10 ms for the focus itself, and 0.01 ms for the resolver.
+
+48 ms is roughly three frames rather than one, and the choice survives it: a synthesised-chord
+bridge would have removed the 6 ms spawn and left the other 42, at the cost of splitting the
+mapping across two programs. The lesson worth keeping is that summing component timings
+predicted a number five times too low, because the expensive part was a lookup neither
+component contained. A
 slot press focuses the most recently used window of its target, adopts a matching window it did
 not open, and otherwise launches the profile and records what it created. Pressing the slot you
 are already in does nothing, as in tmux and WezTerm. Slots are authored by pinning the focused

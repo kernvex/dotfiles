@@ -11,23 +11,32 @@ recency of use and becomes the resolver's `mru_rank` directly.
 
 local M = {}
 
+-- Returns plain data for the resolver, the focused window's id, and the live
+-- window objects keyed by id. That third value is not a convenience: looking a
+-- window back up afterwards with `hs.window.get(id)` re-enumerates everything and
+-- measures ~30 ms, which was the single largest cost in a keypress. We already
+-- hold the object here, so hand it on rather than pay to find it twice.
+--
+-- Deliberately not cached across calls: these are handles to windows that close.
 function M.snapshot()
-  local windows = {}
+  local windows, handles = {}, {}
   for rank, w in ipairs(hs.window.orderedWindows()) do
+    local id = w:id()
+    handles[id] = w
     local app = w:application()
     windows[#windows + 1] = {
-      id = w:id(),
+      id = id,
       app = app and app:name() or "",
       title = w:title() or "",
       mru_rank = rank,
     }
   end
   local focused = hs.window.focusedWindow()
-  return windows, focused and focused:id() or nil
+  return windows, focused and focused:id() or nil, handles
 end
 
-function M.focus(id)
-  local w = hs.window.get(id)
+function M.focus(id, handles)
+  local w = handles and handles[id] or hs.window.get(id)
   if w == nil then return false end
   w:focus()
   return true

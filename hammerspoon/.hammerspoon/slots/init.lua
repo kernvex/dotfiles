@@ -26,14 +26,17 @@ local COMPLAINTS = {
   not_a_browser_identity = "slot %d: focused window is not a Chrome profile window",
 }
 
+-- Returns the world the resolver reasons about, and separately the live window
+-- objects it must not see: the resolver stays pure, and the caller keeps the
+-- handles it needs to act without paying to look them up again.
 local function survey(force_profiles)
-  local windows, focused = desktop.snapshot()
+  local windows, focused, handles = desktop.snapshot()
   return {
     slots = store.load(),
     profiles = chrome.profiles(force_profiles),
     windows = windows,
     focused = focused,
-  }
+  }, handles
 end
 
 -- Reaching one of these means no window matched, so the profile registry we
@@ -44,13 +47,13 @@ end
 local STALE_SUSPECTS = { launch = true, unknown_profile = true }
 
 local function resolve_freshly(request)
-  local world = survey(false)
+  local world, handles = survey(false)
   local action = resolve(request, world)
   if not (STALE_SUSPECTS[action.kind] or STALE_SUSPECTS[action.reason]) then
-    return action, world
+    return action, world, handles
   end
-  world = survey(true)
-  return resolve(request, world), world
+  world, handles = survey(true)
+  return resolve(request, world), world, handles
 end
 
 local function complain(action, digit)
@@ -61,10 +64,10 @@ local function complain(action, digit)
 end
 
 function M.jump(digit)
-  local action = resolve_freshly({ kind = "jump", slot = digit })
+  local action, _, handles = resolve_freshly({ kind = "jump", slot = digit })
 
   if action.kind == "focus" then
-    if not desktop.focus(action.id) then
+    if not desktop.focus(action.id, handles) then
       hs.alert.show(string.format("slot %d: that window went away", digit))
     end
   elseif action.kind == "activate_app" then

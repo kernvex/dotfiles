@@ -135,9 +135,14 @@ native full-screen given up system-wide, terminal included.
 **Karabiner keeps the keyboard.** Hyper is a Karabiner variable that emits no
 modifier flags, so no other program can observe it; anything else would have to be
 a callee. Each slot fires a `shell_command` invoking the Hammerspoon command-line
-interface against the engine. Measured, that hop is 4.5 ms and a window focus is
-14 ms — together under one frame at 60 Hz — so the mapping stays visible in one
-place instead of being split across two programs for an imperceptible saving.
+interface against the engine. A whole keypress measures **~48 ms** end to end, of
+which the `hs -c` hop is ~6 ms — so the mapping stays visible in one place instead
+of being split across two programs to save a fraction of it.
+
+This number was predicted at ~18 ms by adding up component timings, and the first
+end-to-end measurement came back at 88 ms. The gap was `hs.window.get(id)`
+re-enumerating every window to find one it had just been handed, at ~30 ms. Component
+timings do not sum to a keypress; measure the keypress. See ADR 0009.
 
 **The generator is the source of truth.** Slot bindings are edited in the
 TypeScript rules of the `karabiner-manager` submodule of `esetup`, never in the
