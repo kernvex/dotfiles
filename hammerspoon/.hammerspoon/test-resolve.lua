@@ -133,7 +133,7 @@ check("pinning binds a slot to the identity of the focused window",
     },
     focused = 13802,
   }),
-  { kind = "pin", slot = 4, profile_dir = "Profile 72" })
+  { kind = "pin", slot = 4, target = { kind = "profile", dir = "Profile 72" } })
 
 -- A profile deleted in Chrome leaves its slot pointing at nothing. Must report,
 -- not raise: this runs inside a hotkey, where an error is a dead key.
@@ -260,16 +260,50 @@ check("pinning over a bound slot replaces the binding",
     },
     focused = 13802,
   }),
-  { kind = "pin", slot = 2, profile_dir = "Profile 72" })
+  { kind = "pin", slot = 2, target = { kind = "profile", dir = "Profile 72" } })
 
-check("pinning a window that is not a browser identity reports rather than binds",
+-- Any window that is not a browser identity pins as its application: a slot
+-- reaching "Reminders" wants any Reminders window, so the app is the honest unit.
+check("pinning a non-browser window binds its application",
+  resolve({ kind = "pin", slot = 7 }, {
+    slots = {},
+    profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
+    windows = { { id = 9, app = "Reminders", mru_rank = 1, title = "Reminders" } },
+    focused = 9,
+  }),
+  { kind = "pin", slot = 7, target = { kind = "app", name = "Reminders" } })
+
+-- A browser window we cannot attribute must NOT fall through to pinning the
+-- application: "Google Chrome" as a target reaches all four accounts equally,
+-- which is the precise ambiguity this whole feature exists to remove. Happens
+-- for real when a window's title has not been stamped yet, and under screen
+-- lock, where macOS degrades every title to the bare app name.
+check("an unidentifiable browser window refuses rather than pinning the app",
   resolve({ kind = "pin", slot = 2 }, {
     slots = {},
     profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
-    windows = { { id = 9, app = "WezTerm", mru_rank = 1, title = "dotfiles" } },
+    windows = { { id = 9, app = "Google Chrome", mru_rank = 1, title = "Chrome" } },
     focused = 9,
   }),
-  { kind = "none", reason = "not_a_browser_identity" })
+  { kind = "none", reason = "unidentified_browser_window" })
+
+-- `jump` already refuses a colliding signature. `pin` must too, and for a worse
+-- reason: it resolves by scanning the profile table, whose order is undefined, so
+-- it would bind one of the two arbitrarily and write that guess to disk.
+check("pinning a window whose signature two profiles share refuses",
+  resolve({ kind = "pin", slot = 2 }, {
+    slots = {},
+    profiles = {
+      ["Profile 70"] = { name = "Shared Name", given_name = "" },
+      ["Profile 99"] = { name = "Shared Name", given_name = "" },
+    },
+    windows = {
+      { id = 9, app = "Google Chrome", mru_rank = 1,
+        title = "Whose window? - Google Chrome - Shared Name" },
+    },
+    focused = 9,
+  }),
+  { kind = "none", reason = "ambiguous_signature" })
 
 check("pinning with nothing focused reports rather than binds",
   resolve({ kind = "pin", slot = 2 },

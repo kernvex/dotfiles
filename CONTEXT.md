@@ -130,9 +130,12 @@ details, no decisions (those live in `docs/adr/`).
   absent altogether, whether it is full-screen or perfectly ordinary. This is why every
   window a slot can reach shares a single Desktop.
 
-- **Pinning** — binding a slot to the browser identity of the window in front of you,
-  instead of writing the slot table by hand. How the table comes into existence on a new
-  machine, and the reason nobody has to look up profile directory numbers.
+- **Pinning** — binding a slot to whatever the window in front of you represents: its
+  browser identity if it is a browser window, otherwise its application. Instead of
+  writing the slot table by hand. How the table comes into existence on a new machine,
+  and the reason nobody has to look up profile directory numbers. A browser window that
+  cannot be attributed to one identity is refused rather than pinned as its
+  application — "the browser" is the ambiguity slots exist to remove.
 
 - **Adoption** — a slot claiming a window it did not itself open, by recognising the
   window's signature. What keeps a slot honest when you open a window from Chrome's own

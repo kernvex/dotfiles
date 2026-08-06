@@ -48,9 +48,10 @@ claims it — **adoption**. If no such window exists at all, the slot opens the
 profile and remembers what it opened. If you are already in the slot's window,
 nothing happens.
 
-The **slot table** is never edited by hand. **Pinning** binds a slot to the browser
-identity of the window in front of you, so setting the whole thing up on a new
-machine means opening your windows and pressing a key per window.
+The **slot table** is never edited by hand. **Pinning** binds a slot to whatever the
+window in front of you represents — its browser identity if it is a browser window,
+its application otherwise — so setting the whole thing up on a new machine means
+opening your windows and pressing a key per window, whatever kind of window it is.
 
 Because only **reachable windows** — those on the active Desktop — can be found or
 focused at all, every window a slot can reach lives on a single Desktop, with
@@ -222,7 +223,17 @@ windows the engine never opened. Keeping a recorded identifier alongside that wo
 mean two answers to one question and a second thing to invalidate when a window
 closes. The identifier is dropped and adoption is the only path.
 
-**Pinning** binds a slot to the browser identity of the focused window, replacing any
+**Pinning binds any kind of target**, not only a browser identity. The focused window
+becomes a browser-identity target if exactly one profile signature matches it, and an
+application target otherwise — so the same gesture writes every slot and no slot needs
+hand-editing. Two refusals guard it. A browser window matching *no* signature is refused
+rather than pinned as its application, because "Google Chrome" reaches all four accounts
+equally and is the ambiguity the feature exists to remove; this is a live case, since
+macOS degrades titles to the bare app name under screen lock. A window matching *two*
+signatures is refused as well: resolution scans the profile registry, whose order is
+undefined, so picking the first would write a coin toss to disk.
+
+Pinning otherwise binds a slot to the focused window, replacing any
 existing binding, and persists the table. It is reached through a dedicated sublayer
 rather than a modifier variant, because Hyper is itself a modifier combination. The
 key is confirmed on screen naming what was bound.

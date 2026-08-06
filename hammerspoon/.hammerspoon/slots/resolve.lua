@@ -29,11 +29,16 @@ local function owns(window, profile)
   return #title >= #suffix and title:sub(-#suffix) == suffix
 end
 
--- Which browser identity owns a window, or nil if none does.
-local function identity_of(window, profiles)
+-- Every browser identity whose signature the window carries. Normally zero or
+-- one. Two means two profiles share a name, and the caller must not pick between
+-- them: `pairs` has no defined order, so "the first match" is a coin toss that
+-- would be written to disk as if it were a decision.
+local function identities_of(window, profiles)
+  local found = {}
   for dir, profile in pairs(profiles) do
-    if owns(window, profile) then return dir end
+    if owns(window, profile) then found[#found + 1] = dir end
   end
+  return found
 end
 
 local function pin(request, world)
@@ -45,12 +50,26 @@ local function pin(request, world)
     return { kind = "none", reason = "nothing_focused" }
   end
 
-  local dir = identity_of(focused, world.profiles)
-  if dir == nil then
-    return { kind = "none", reason = "not_a_browser_identity" }
+  local dirs = identities_of(focused, world.profiles)
+  if #dirs > 1 then
+    return { kind = "none", reason = "ambiguous_signature" }
+  end
+  if #dirs == 1 then
+    return { kind = "pin", slot = request.slot, target = { kind = "profile", dir = dirs[1] } }
   end
 
-  return { kind = "pin", slot = request.slot, profile_dir = dir }
+  -- A browser window we could not attribute must not become an application
+  -- target: "Google Chrome" reaches every account equally, which is the exact
+  -- ambiguity slots exist to remove. Refusing is the only honest answer.
+  if focused.app == BROWSER then
+    return { kind = "none", reason = "unidentified_browser_window" }
+  end
+
+  return {
+    kind = "pin",
+    slot = request.slot,
+    target = { kind = "app", name = focused.app },
+  }
 end
 
 local function jump(request, world)

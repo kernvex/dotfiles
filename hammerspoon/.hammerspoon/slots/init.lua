@@ -23,8 +23,17 @@ local COMPLAINTS = {
   unknown_profile = "slot %d: that Chrome profile no longer exists",
   ambiguous_signature = "slot %d: two profiles share a name — rename one",
   nothing_focused = "slot %d: no focused window to pin",
-  not_a_browser_identity = "slot %d: focused window is not a Chrome profile window",
+  unidentified_browser_window = "slot %d: cannot tell which profile that Chrome window is",
 }
+
+-- What to call a target on screen. A profile is named by whatever Chrome calls it
+-- right now, which is the only name you would recognise.
+local function describe(target, profiles)
+  if target.kind == "app" then return target.name end
+  local profile = profiles[target.dir]
+  if profile and profile.name ~= "" then return profile.name end
+  return target.dir
+end
 
 -- Returns the world the resolver reasons about, and separately the live window
 -- objects it must not see: the resolver stays pure, and the caller keeps the
@@ -90,16 +99,15 @@ function M.pin(digit)
     return
   end
 
-  world.slots[action.slot] = { kind = "profile", dir = action.profile_dir }
+  -- The resolver decided what the target is; this only records it.
+  world.slots[action.slot] = action.target
   local saved, err = store.save(world.slots, world.profiles)
   if not saved then
     hs.alert.show("could not write the slot table: " .. tostring(err))
     return
   end
 
-  local profile = world.profiles[action.profile_dir]
-  hs.alert.show(string.format("slot %d → %s", digit,
-    profile and profile.name ~= "" and profile.name or action.profile_dir))
+  hs.alert.show(string.format("slot %d → %s", digit, describe(action.target, world.profiles)))
 end
 
 -- Diagnostics. `hs -c "print(slots.explain())"` answers "why did that key do
