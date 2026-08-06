@@ -53,6 +53,7 @@ plugins, no `CLAUDE.md`. `work-seat/` is the template that fixes that, and
 | `settings.json` | file | The work profile: status line, model, and the `disable*` flags that keep a client seat off connectors, remote control and workflows |
 | `CLAUDE.md` | relative symlink | Global instructions apply to client work too — one file, not a copy that drifts |
 | `plugins` | relative symlink | Plugin installs are large and identical per seat; sharing them avoids re-downloading a marketplace per client |
+| `skills` | relative symlink | The `~/.claude/skills` farm — personal skills plus the job-skills shadows. A client seat *especially* needs the shadows: they are what keeps `/to-spec` in a work clone writing to the Sidecar instead of the employer's tree |
 
 The two symlinks are **relative** (`../.claude/x`) deliberately. Inside
 `~/.claude-<slug>/` that resolves to `~/.claude/x` on any machine and under any
