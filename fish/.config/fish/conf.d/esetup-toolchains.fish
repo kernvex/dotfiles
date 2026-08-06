@@ -12,3 +12,9 @@ set -gx DOTNET_ROOT "/opt/homebrew/opt/dotnet/libexec"
 if test -f /opt/homebrew/share/google-cloud-sdk/path.fish.inc
   source /opt/homebrew/share/google-cloud-sdk/path.fish.inc
 end
+
+# Versioned .NET SDK kegs. Keg-only, deliberately not on PATH — the brew
+# prefix's `dotnet` always wins there, so each gets a function instead.
+function dotnet8 --description 'dotnet from the dotnet@8 keg'
+  /opt/homebrew/opt/dotnet@8/bin/dotnet $argv
+end
