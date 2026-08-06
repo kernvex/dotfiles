@@ -50,7 +50,7 @@
     }
   },
   "effortLevel": "high",
-  "tui": "fullscreen",
+  "tui": "default",
   "autoMemoryEnabled": false,
   "skipWorkflowUsageWarning": true,
   "theme": "dark"
