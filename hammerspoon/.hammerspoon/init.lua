@@ -18,3 +18,17 @@ require("hs.ipc")
 hs.window.animationDuration = 0
 
 slots = require("slots")
+
+-- Karabiner reaches the slots through this one-way URL event, not the `hs`
+-- CLI. The CLI blocks on a CFMessagePort reply, and that port corrupts across
+-- Hammerspoon reloads — the command may still execute, but the spawned `hs`
+-- wedges forever and the next keypress hits a poisoned port and executes
+-- nothing. A URL event has no reply channel, so there is nothing to corrupt.
+-- hs.ipc above stays for diagnostics (`hs -c "print(slots.explain())"`) only;
+-- no keypress depends on it.
+hs.urlevent.bind("slots", function(_, params)
+  local verb, digit = params.act, tonumber(params.n)
+  if digit and (verb == "jump" or verb == "pin" or verb == "solo") then
+    slots[verb](digit)
+  end
+end)

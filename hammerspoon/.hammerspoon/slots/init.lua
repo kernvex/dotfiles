@@ -1,8 +1,9 @@
 --[[ Window slots: one key, one window.
 
 Karabiner owns the keyboard — Hyper is a Karabiner variable that emits no
-modifier flags, so nothing else can observe it — and each slot arrives here as
-`hs -c "slots.jump(2)"`. See ADR 0009 and CONTEXT.md's window navigation terms.
+modifier flags, so nothing else can observe it — and each slot arrives as a
+`hammerspoon://slots?act=jump&n=2` URL event, bound in the root init.lua.
+See ADR 0009 and CONTEXT.md's window navigation terms.
 
 This module is wiring only. Every decision lives in `slots.resolve`, which is
 pure and covered by test-resolve.lua; everything macOS-shaped lives in the
