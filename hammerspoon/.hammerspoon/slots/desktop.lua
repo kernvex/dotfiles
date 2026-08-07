@@ -72,9 +72,15 @@ end
 function M.focus(id, handles)
   local w = handles and handles[id] or hs.window.get(id)
   if w == nil then return false end
-  -- A window solo minimized must come back out of the Dock: focus alone
-  -- raises and activates but never unminimizes.
-  if w:isMinimized() then w:unminimize() end
+  -- A window solo minimized must come back out of the Dock: focus alone raises
+  -- and activates but never unminimizes. Unminimizing a visible app animates
+  -- out of the Dock and macOS offers no off switch — but a hidden app renders
+  -- nothing, so the state flips invisibly and focus() un-hides the result.
+  if w:isMinimized() then
+    local app = w:application()
+    if app and not app:isHidden() then app:hide() end
+    w:unminimize()
+  end
   w:focus()
   return true
 end
@@ -83,13 +89,36 @@ end
 -- background process is at best a no-op and at worst pulls a menu-bar app's
 -- panel out from under it. Hidden apps un-hide themselves on activation, so a
 -- later jump to any of them needs no undo step here.
+--
+-- Minimizing a visible window animates into the Dock and macOS offers no off
+-- switch. A hidden app renders nothing, so the same state change made while
+-- its app is hidden shows no animation at all — hence the order below: hide
+-- everything outside the keep set, briefly hide the sibling windows' own apps
+-- too while they minimize off-screen, then re-activate those apps so the
+-- surviving window snaps back. Hide and unhide are both instant, so the whole
+-- clear is one swap rather than a cascade of genies.
 function M.clear_backdrop(keep, minimize, handles)
-  for _, id in ipairs(minimize) do
-    local w = handles and handles[id]
-    if w then w:minimize() end
-  end
   for _, app in ipairs(hs.application.runningApplications()) do
     if app:kind() == 1 and not keep[app:name()] then app:hide() end
+  end
+  if #minimize == 0 then return end
+
+  local owners, order = {}, {}
+  for _, id in ipairs(minimize) do
+    local w = handles and handles[id]
+    local app = w and w:application()
+    if app then
+      if not owners[app:pid()] then
+        owners[app:pid()] = true
+        order[#order + 1] = app
+        if not app:isHidden() then app:hide() end
+      end
+      w:minimize()
+    end
+  end
+  for _, app in ipairs(order) do
+    app:unhide()
+    app:activate()
   end
 end
 
