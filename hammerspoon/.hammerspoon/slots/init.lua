@@ -38,8 +38,9 @@ end
 -- Returns the world the resolver reasons about, and separately the live window
 -- objects it must not see: the resolver stays pure, and the caller keeps the
 -- handles it needs to act without paying to look them up again.
-local function survey(force_profiles)
-  local windows, focused, handles = desktop.snapshot()
+local function survey(force_profiles, deep)
+  local snapshot = deep and desktop.snapshot_deep or desktop.snapshot
+  local windows, focused, handles = snapshot()
   return {
     slots = store.load(),
     profiles = chrome.profiles(force_profiles),
@@ -48,20 +49,23 @@ local function survey(force_profiles)
   }, handles
 end
 
--- Reaching one of these means no window matched, so the profile registry we
--- matched against is the prime suspect: a rename or a sign-in since the last read
--- changes a signature, and acting on a stale one opens a duplicate window. Pay
--- for a forced re-read here and nowhere else — it costs ~50 ms, which is
--- invisible next to launching a browser and unaffordable on the focus path.
+-- Reaching one of these means no window matched, and two suspects explain
+-- that: the profile registry is stale (a rename or sign-in changed a
+-- signature), or the window exists but is minimized or hidden — the states
+-- solo leaves the backdrop in, which the ordinary snapshot cannot see. The
+-- retry re-reads the registry AND sweeps deep, because acting on either
+-- mistake opens a duplicate window. Both costs stay off the focus path, where
+-- they would be unaffordable on every keypress.
 local STALE_SUSPECTS = { launch = true, unknown_profile = true }
 
 local function resolve_freshly(request)
-  local world, handles = survey(false)
+  local world, handles = survey(false, false)
   local action = resolve(request, world)
-  if not (STALE_SUSPECTS[action.kind] or STALE_SUSPECTS[action.reason]) then
+  local inner = action.action or action
+  if not (STALE_SUSPECTS[inner.kind] or STALE_SUSPECTS[inner.reason]) then
     return action, world, handles
   end
-  world, handles = survey(true)
+  world, handles = survey(true, true)
   return resolve(request, world), world, handles
 end
 
@@ -72,9 +76,7 @@ local function complain(action, digit)
     or string.format("slot %d: %s", digit, tostring(action.reason)))
 end
 
-function M.jump(digit)
-  local action, _, handles = resolve_freshly({ kind = "jump", slot = digit })
-
+local function perform(action, handles, digit)
   if action.kind == "focus" then
     if not desktop.focus(action.id, handles) then
       hs.alert.show(string.format("slot %d: that window went away", digit))
@@ -88,6 +90,24 @@ function M.jump(digit)
   else
     complain(action, digit)
   end
+end
+
+function M.jump(digit)
+  local action, _, handles = resolve_freshly({ kind = "jump", slot = digit })
+  perform(action, handles, digit)
+end
+
+-- The jump, then the backdrop clears so the wallpaper shows through the
+-- translucent window. A solo that cannot reach a window degrades to exactly
+-- what jump would have said, complaint included, and hides nothing.
+function M.solo(digit)
+  local action, _, handles = resolve_freshly({ kind = "solo", slot = digit })
+  if action.kind ~= "solo" then
+    complain(action, digit)
+    return
+  end
+  perform(action.action, handles, digit)
+  desktop.clear_backdrop(action.keep, action.minimize, handles)
 end
 
 function M.pin(digit)

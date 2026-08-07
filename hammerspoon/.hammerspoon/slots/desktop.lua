@@ -35,11 +35,62 @@ function M.snapshot()
   return windows, focused and focused:id() or nil, handles
 end
 
+-- The deep sweep: every standard window, including minimized ones and those of
+-- hidden applications — the two states solo puts windows into, and the two
+-- states orderedWindows cannot see. Costs a full Accessibility enumeration per
+-- running app, so it backs the miss path only, never a routine keypress.
+-- Hidden and minimized windows carry no recency, so they rank after every
+-- visible window, in discovery order.
+function M.snapshot_deep()
+  local windows, handles = {}, {}
+  local rank = 0
+  local function add(w)
+    local id = w:id()
+    if id == nil or handles[id] then return end
+    rank = rank + 1
+    handles[id] = w
+    local app = w:application()
+    windows[#windows + 1] = {
+      id = id,
+      app = app and app:name() or "",
+      title = w:title() or "",
+      mru_rank = rank,
+    }
+  end
+  for _, w in ipairs(hs.window.orderedWindows()) do add(w) end
+  for _, app in ipairs(hs.application.runningApplications()) do
+    if app:kind() == 1 then
+      for _, w in ipairs(app:allWindows()) do
+        if w:isStandard() or w:isMinimized() then add(w) end
+      end
+    end
+  end
+  local focused = hs.window.focusedWindow()
+  return windows, focused and focused:id() or nil, handles
+end
+
 function M.focus(id, handles)
   local w = handles and handles[id] or hs.window.get(id)
   if w == nil then return false end
+  -- A window solo minimized must come back out of the Dock: focus alone
+  -- raises and activates but never unminimizes.
+  if w:isMinimized() then w:unminimize() end
   w:focus()
   return true
+end
+
+-- kind() == 1 keeps this to ordinary Dock applications: hiding an accessory or
+-- background process is at best a no-op and at worst pulls a menu-bar app's
+-- panel out from under it. Hidden apps un-hide themselves on activation, so a
+-- later jump to any of them needs no undo step here.
+function M.clear_backdrop(keep, minimize, handles)
+  for _, id in ipairs(minimize) do
+    local w = handles and handles[id]
+    if w then w:minimize() end
+  end
+  for _, app in ipairs(hs.application.runningApplications()) do
+    if app:kind() == 1 and not keep[app:name()] then app:hide() end
+  end
 end
 
 function M.activate_app(name)

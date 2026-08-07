@@ -119,9 +119,50 @@ local function jump(request, world)
   return { kind = "launch", profile_dir = target.dir }
 end
 
+-- Solo = the jump, plus instructions to clear the backdrop so the wallpaper
+-- shows through a translucent window. Only these outcomes have a window to be
+-- alone with; every other action passes through undecorated and unclears nothing.
+local BACKDROP_SAFE = { focus = true, activate_app = true, activate_pair = true, launch = true }
+
+-- Which applications must stay visible, and — when the target is one specific
+-- window — that window's id, so its same-app siblings can be minimized.
+local function keep_of(action, world)
+  if action.kind == "activate_app" then return { [action.name] = true } end
+  if action.kind == "activate_pair" then return { [action.left] = true, [action.right] = true } end
+  if action.kind == "launch" then return { [BROWSER] = true } end
+  local id = action.kind == "focus" and action.id or world.focused
+  for _, w in ipairs(world.windows) do
+    if w.id == id then return { [w.app] = true }, id end
+  end
+end
+
+local function solo(request, world)
+  local action = jump(request, world)
+  if not (BACKDROP_SAFE[action.kind] or action.reason == "already_there") then
+    return action
+  end
+  local keep, focus_id = keep_of(action, world)
+  if keep == nil then return action end
+
+  -- Hiding is per-application, so the kept app's other windows can only leave
+  -- the backdrop by being minimized. For a focused window that is its same-app
+  -- siblings; for a launch, every current browser window — the window being
+  -- launched is the one the slot wants.
+  local minimize = {}
+  for _, w in ipairs(world.windows) do
+    if keep[w.app] and w.id ~= focus_id and (focus_id or action.kind == "launch") then
+      minimize[#minimize + 1] = w.id
+    end
+  end
+  return { kind = "solo", action = action, keep = keep, minimize = minimize }
+end
+
 function M.resolve(request, world)
   if request.kind == "pin" then
     return pin(request, world)
+  end
+  if request.kind == "solo" then
+    return solo(request, world)
   end
   return jump(request, world)
 end

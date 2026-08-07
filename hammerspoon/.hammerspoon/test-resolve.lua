@@ -193,6 +193,86 @@ check("colliding profile names refuse the jump instead of guessing",
   { kind = "none", reason = "ambiguous_signature" })
 
 -- ---------------------------------------------------------------------------
+-- Solo: the jump plus backdrop-clearing instructions. The resolver decides who
+-- stays visible and which same-app siblings leave; the adapters only obey.
+
+check("solo on an app slot keeps that app and hides the rest",
+  resolve({ kind = "solo", slot = 8 }, {
+    slots = { [8] = { kind = "app", name = "Slack" } },
+    profiles = {},
+    windows = {
+      { id = 1, app = "Slack", mru_rank = 1, title = "Slack" },
+      { id = 2, app = "Mail", mru_rank = 2, title = "Inbox" },
+    },
+    focused = nil,
+  }),
+  { kind = "solo", action = { kind = "activate_app", name = "Slack" },
+    keep = { Slack = true }, minimize = {} })
+
+-- Hiding is per-application, so the browser's other identities can only leave
+-- the backdrop by being minimized — and only they do; the target stays up.
+check("solo on a browser identity minimizes the browser's other windows",
+  resolve({ kind = "solo", slot = 2 }, {
+    slots = { [2] = { kind = "profile", dir = "Profile 70" } },
+    profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
+    windows = {
+      { id = 100, app = "Google Chrome", mru_rank = 1,
+        title = "Inbox - Google Chrome - Sam (Sam Weber (Northwind))" },
+      { id = 200, app = "Google Chrome", mru_rank = 2,
+        title = "Other - Google Chrome - Alex Rivera (Acme Group)" },
+      { id = 300, app = "WezTerm", mru_rank = 3, title = "dotfiles" },
+    },
+    focused = nil,
+  }),
+  { kind = "solo", action = { kind = "focus", id = 100 },
+    keep = { ["Google Chrome"] = true }, minimize = { 200 } })
+
+-- Already being there is not a reason to skip: clearing the backdrop is the
+-- half of solo that jump does not already do.
+check("solo on the slot you are in still clears the backdrop",
+  resolve({ kind = "solo", slot = 2 }, {
+    slots = { [2] = { kind = "profile", dir = "Profile 70" } },
+    profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
+    windows = {
+      { id = 100, app = "Google Chrome", mru_rank = 1,
+        title = "Inbox - Google Chrome - Sam (Sam Weber (Northwind))" },
+      { id = 200, app = "Google Chrome", mru_rank = 2,
+        title = "Other - Google Chrome - Alex Rivera (Acme Group)" },
+    },
+    focused = 100,
+  }),
+  { kind = "solo", action = { kind = "none", reason = "already_there" },
+    keep = { ["Google Chrome"] = true }, minimize = { 200 } })
+
+-- The launched window is the one the slot wants, so every current browser
+-- window is backdrop.
+check("solo that launches keeps the browser and minimizes its current windows",
+  resolve({ kind = "solo", slot = 2 }, {
+    slots = { [2] = { kind = "profile", dir = "Profile 70" } },
+    profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
+    windows = {
+      { id = 200, app = "Google Chrome", mru_rank = 1,
+        title = "Other - Google Chrome - Alex Rivera (Acme Group)" },
+    },
+    focused = nil,
+  }),
+  { kind = "solo", action = { kind = "launch", profile_dir = "Profile 70" },
+    keep = { ["Google Chrome"] = true }, minimize = { 200 } })
+
+check("solo on a pair keeps both applications",
+  resolve({ kind = "solo", slot = 7 }, {
+    slots = { [7] = { kind = "pair", left = "Calendar", right = "Reminders" } },
+    profiles = {}, windows = {}, focused = nil,
+  }),
+  { kind = "solo", action = { kind = "activate_pair", left = "Calendar", right = "Reminders" },
+    keep = { Calendar = true, Reminders = true }, minimize = {} })
+
+check("solo on an unbound slot does nothing and hides nothing",
+  resolve({ kind = "solo", slot = 6 },
+          { slots = {}, profiles = {}, windows = {}, focused = nil }),
+  { kind = "none", reason = "unbound" })
+
+-- ---------------------------------------------------------------------------
 -- Guards. These passed the moment they were written; they exist to stop a future
 -- "simplification" of the matcher, not to have driven it. Each is a shape seen on
 -- a real machine during design (names invented, structure untouched).
