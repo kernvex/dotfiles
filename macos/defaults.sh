@@ -83,12 +83,12 @@ fi
 # ---------------------------------------------------------------------------
 # Rectangle window gaps
 #
-# The visual spec: 15 between two adjacent windows, 30 from a window to a screen
-# edge, nothing at the top — the menu bar (30 pt on this display's 1920x1080
-# looks-like scaling) is the top spacing. The 30 is deliberately composed as two
-# independent 15s: gapSize insets every window by 15, and the screenEdgeGap*
-# keys shrink the screen by another 15 on the three non-top sides. A single
-# gapSize of 30 would put 30 between adjacent windows too, which is not the spec.
+# The visual spec: 12 between two adjacent windows, 24 from a window to a screen
+# edge, nothing at the top — the menu bar is the top spacing. The 24 is
+# deliberately composed as two independent 12s: gapSize insets every window by
+# 12, and the screenEdgeGap* keys shrink the screen by another 12 on the three
+# non-top sides. A single gapSize of 24 would put 24 between adjacent windows
+# too, which is not the spec.
 #
 # gapSize is Rectangle's "Gaps between windows" and by default it also applies
 # to Maximize (Rectangle's TerminalCommands.md) — that behaviour is the point
@@ -100,12 +100,12 @@ fi
 # value change here needs no edit there. Rectangle reads them at launch, hence
 # the restart when any value moves.
 rect_before="$(defaults read com.knollsoft.Rectangle gapSize 2>/dev/null || true)/$(defaults read com.knollsoft.Rectangle screenEdgeGapLeft 2>/dev/null || true)/$(defaults read com.knollsoft.Rectangle screenEdgeGapRight 2>/dev/null || true)/$(defaults read com.knollsoft.Rectangle screenEdgeGapBottom 2>/dev/null || true)/$(defaults read com.knollsoft.Rectangle skipGapTopEdge 2>/dev/null || true)"
-set_default com.knollsoft.Rectangle gapSize -float 15
-set_default com.knollsoft.Rectangle screenEdgeGapLeft -int 15
-set_default com.knollsoft.Rectangle screenEdgeGapRight -int 15
-set_default com.knollsoft.Rectangle screenEdgeGapBottom -int 15
+set_default com.knollsoft.Rectangle gapSize -float 12
+set_default com.knollsoft.Rectangle screenEdgeGapLeft -int 12
+set_default com.knollsoft.Rectangle screenEdgeGapRight -int 12
+set_default com.knollsoft.Rectangle screenEdgeGapBottom -int 12
 set_default com.knollsoft.Rectangle skipGapTopEdge -bool true
-if [ "$rect_before" != "15/15/15/15/1" ]; then
+if [ "$rect_before" != "12/12/12/12/1" ]; then
   killall Rectangle 2>/dev/null || true
   sleep 1
   open -a Rectangle 2>/dev/null || true
