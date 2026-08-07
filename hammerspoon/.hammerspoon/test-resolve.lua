@@ -466,6 +466,81 @@ check("an application target ignores how many windows it has",
   { kind = "activate_app", name = "Slack" })
 
 -- ---------------------------------------------------------------------------
+-- unaccounted: the windows Chrome admits to that the Accessibility tree has
+-- lost. Scripted windows carry bare tab titles; AX titles extend them with
+-- decorations and the profile stamp, or the window is gone from AX entirely —
+-- which is the case this function exists to catch.
+
+check("a window Chrome lists but AX cannot see is reported for rescue",
+  resolve.unaccounted(
+    { { id = 5, title = "Chat | Teams", minimized = false } },
+    {}),
+  { 5 })
+
+check("a decorated AX title accounts for its bare tab title",
+  resolve.unaccounted(
+    { { id = 5, title = "Chat | Teams", minimized = false } },
+    { { id = 1, app = "Google Chrome", mru_rank = 1,
+        title = "Chat | Teams - Pinned - Google Chrome - Sam (Sam Weber (Northwind))" } }),
+  {})
+
+-- The minimized window is AX-visible and claims the one AX title, which is
+-- exactly what leaves its lost twin — same tab title — with nothing to claim.
+check("a minimized twin does not mask a lost window with the same title",
+  resolve.unaccounted(
+    { { id = 3, title = "New Tab", minimized = true },
+      { id = 7, title = "New Tab", minimized = false } },
+    { { id = 1, app = "Google Chrome", mru_rank = 1,
+        title = "New Tab - Google Chrome - Sam (Sam Weber (Northwind))" } }),
+  { 7 })
+
+-- "New" is a prefix of "New Tab" but not at a " - " boundary, so it must not
+-- claim that AX title.
+check("a tab title claims only at a ' - ' boundary, not any prefix",
+  resolve.unaccounted(
+    { { id = 3, title = "New", minimized = false } },
+    { { id = 1, app = "Google Chrome", mru_rank = 1,
+        title = "New Tab - Google Chrome - Sam (Sam Weber (Northwind))" } }),
+  { 3 })
+
+-- Longest first: were "Inbox" allowed to claim the only AX title, the longer
+-- "Inbox - Zimbra" would be consigned while actually visible.
+check("the longest tab title claims first so a shorter one cannot double-book",
+  resolve.unaccounted(
+    { { id = 2, title = "Inbox", minimized = false },
+      { id = 4, title = "Inbox - Zimbra", minimized = false } },
+    { { id = 1, app = "Google Chrome", mru_rank = 1,
+        title = "Inbox - Zimbra - Google Chrome - Sam (Sam Weber (Northwind))" } }),
+  { 2 })
+
+-- A terminal displaying a Chrome-shaped title must not vouch for a browser
+-- window.
+check("only browser windows can account for a scripted window",
+  resolve.unaccounted(
+    { { id = 9, title = "Chat | Teams", minimized = false } },
+    { { id = 1, app = "WezTerm", mru_rank = 1,
+        title = "Chat | Teams - Google Chrome - Sam (Sam Weber (Northwind))" } }),
+  { 9 })
+
+-- A blank tab title attributes to nothing; consigning on it would gamble a
+-- visible window. Skipped, never reported.
+check("a blank tab title is never consigned",
+  resolve.unaccounted(
+    { { id = 6, title = "", minimized = false } },
+    {}),
+  {})
+
+check("a consistent world rescues nothing",
+  resolve.unaccounted(
+    { { id = 2, title = "Docs", minimized = false },
+      { id = 3, title = "Mail", minimized = true } },
+    { { id = 1, app = "Google Chrome", mru_rank = 1,
+        title = "Docs - Google Chrome - Reception" },
+      { id = 4, app = "Google Chrome", mru_rank = 2,
+        title = "Mail - Google Chrome - Reception" } }),
+  {})
+
+-- ---------------------------------------------------------------------------
 
 if #failures > 0 then
   io.stderr:write(string.format("\n%d passed, %d FAILED\n\n", passed, #failures))

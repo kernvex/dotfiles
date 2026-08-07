@@ -163,6 +163,59 @@ local function solo(request, world)
   return { kind = "solo", action = action, keep = keep, minimize = minimize }
 end
 
+-- Chrome sometimes restores a parked window by itself — a page that redirects
+-- or re-authenticates while minimized (Teams, Outlook) un-minimizes its own
+-- window — and when that happens while Chrome is hidden, the window server
+-- loses it: the window leaves the Accessibility tree entirely, so both
+-- snapshots go blind and the slot that owns it opens a duplicate. Chrome's
+-- scripting interface still lists the window, so the disagreement between the
+-- two lists is exactly the set to rescue.
+--
+-- Joining the lists is a title exercise. Scripting reports the bare tab
+-- title; AX stamps "<tab title>[ - <decorations>] - Google Chrome -
+-- <signature>". So an AX browser title accounts for a scripted window when it
+-- equals the tab title or extends it at a " - " boundary. Longest tab title
+-- claims first and each AX title is spent once, so one tab title prefixing
+-- another ("Inbox" / "Inbox - Zimbra") cannot double-book a window. Minimized
+-- scripted windows claim their AX title but are never reported: the deep
+-- sweep already sees them, and consuming their title is what keeps a lost
+-- twin with the same tab title detectable. A blank tab title attributes to
+-- nothing and is skipped: consigning on a blank match would gamble a visible
+-- window on it.
+function M.unaccounted(scripted, windows)
+  local pool = {}
+  for _, w in ipairs(windows) do
+    if w.app == BROWSER then pool[#pool + 1] = w.title end
+  end
+  local order = {}
+  for i, sw in ipairs(scripted) do order[i] = sw end
+  table.sort(order, function(a, b)
+    if #a.title ~= #b.title then return #a.title > #b.title end
+    return a.id < b.id
+  end)
+  local lost = {}
+  for _, sw in ipairs(order) do
+    if sw.title ~= "" then
+      local claimed
+      for i, title in ipairs(pool) do
+        if title == sw.title
+          or (title:sub(1, #sw.title) == sw.title
+              and title:sub(#sw.title + 1, #sw.title + 3) == " - ") then
+          claimed = i
+          break
+        end
+      end
+      if claimed then
+        table.remove(pool, claimed)
+      elseif not sw.minimized then
+        lost[#lost + 1] = sw.id
+      end
+    end
+  end
+  table.sort(lost)
+  return lost
+end
+
 function M.resolve(request, world)
   if request.kind == "pin" then
     return pin(request, world)

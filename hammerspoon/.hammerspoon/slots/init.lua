@@ -67,6 +67,21 @@ local function resolve_freshly(request)
     return action, world, handles
   end
   world, handles = survey(true, true)
+  action = resolve(request, world)
+  inner = action.action or action
+  if inner.kind ~= "launch" then return action, world, handles end
+  -- Even the deep sweep has one blind spot: a parked window Chrome restored
+  -- by itself while hidden leaves the Accessibility tree entirely (see
+  -- resolve.unaccounted). Launching against that blindness opens a duplicate
+  -- window, so before trusting a launch, rescue whatever Chrome still admits
+  -- to and look once more. The sleep is a blocking beat on Hammerspoon's main
+  -- thread, affordable only because this path already ends in either a rescue
+  -- or a browser launch — both of which dwarf it.
+  local lost = resolve.unaccounted(chrome.windows(), world.windows)
+  if #lost == 0 then return action, world, handles end
+  chrome.consign(lost)
+  hs.timer.usleep(300000)
+  world, handles = survey(true, true)
   return resolve(request, world), world, handles
 end
 

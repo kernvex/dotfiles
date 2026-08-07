@@ -49,4 +49,45 @@ function M.profiles(force)
   return profiles
 end
 
+-- The scripting interface is the one voice that lists every window Chrome
+-- believes it has — including a window the Accessibility tree has lost (see
+-- resolve.unaccounted). Titles here are bare tab titles: the
+-- " - Google Chrome - <signature>" stamp exists only on the AX side. Guarded
+-- on the app actually running, because AppleScript would launch Chrome to
+-- answer, and asking about windows must never start a browser.
+function M.windows()
+  if hs.application.get("Google Chrome") == nil then return {} end
+  local ok, out = hs.osascript.applescript([[
+    set acc to {}
+    tell application "Google Chrome"
+      repeat with w in windows
+        set end of acc to {id of w, title of w, minimized of w}
+      end repeat
+    end tell
+    return acc
+  ]])
+  if not ok or type(out) ~= "table" then return {} end
+  local list = {}
+  for _, row in ipairs(out) do
+    list[#list + 1] = { id = row[1], title = row[2], minimized = row[3] }
+  end
+  return list
+end
+
+-- Park these windows (Chrome window ids) as minimized, through Chrome itself:
+-- a window AX has lost cannot be reached by any hs.window call, but Chrome
+-- still owns it, and minimizing re-registers it with the window server —
+-- after which the deep sweep sees it and a slot can raise it normally.
+-- `try` per window: an id can go stale between the survey and this call.
+function M.consign(ids)
+  if #ids == 0 then return end
+  local lines = { 'tell application "Google Chrome"' }
+  for _, id in ipairs(ids) do
+    lines[#lines + 1] = string.format(
+      "  try\n    set minimized of window id %d to true\n  end try", id)
+  end
+  lines[#lines + 1] = "end tell"
+  hs.osascript.applescript(table.concat(lines, "\n"))
+end
+
 return M
