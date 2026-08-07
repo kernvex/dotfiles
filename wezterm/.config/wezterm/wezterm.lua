@@ -48,8 +48,11 @@ return {
     ["Gruvbox Dark Hard"] = {
       -- The default text color
       foreground = "#ebdbb2",
-      -- The default background color
-      background = "#1d2021",
+      -- The default background color. Darker than Gruvbox's own #1d2021 on
+      -- purpose: with opacity below 1.0 the effective backdrop is this color
+      -- plus the wallpaper bleeding through, so a darker floor buys back the
+      -- contrast the translucency spends — without recoloring any text.
+      background = "#101213",
       -- Overrides the cell background color when the current cell is occupied by the
       -- cursor and the cursor style is set to Block
       cursor_bg = "#ebdbb2",
@@ -91,10 +94,15 @@ return {
   },
 
   -- Translucency. Opacity below 1.0 is what activates the blur; blur is the
-  -- radius macOS composites behind the window, not a percentage. 0.9/30 is the
+  -- radius macOS composites behind the window, not a percentage. 0.9/32 is the
   -- common readable pairing — lower opacity trades text contrast for see-through.
   window_background_opacity = 0.90,
-  macos_window_background_blur = 30,
+  macos_window_background_blur = 32,
+
+  -- Every glyph's color is multiplied by this before drawing — the knob made
+  -- for translucent backgrounds. It lifts the whole palette uniformly, so TUI
+  -- color semantics survive where a hand-retuned scheme would drift.
+  foreground_text_hsb = { hue = 1.0, saturation = 1.02, brightness = 1.10 },
 
   native_macos_fullscreen_mode = true,
 
