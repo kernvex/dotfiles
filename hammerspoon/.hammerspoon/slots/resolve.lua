@@ -182,6 +182,35 @@ end
 -- twin with the same tab title detectable. A blank tab title attributes to
 -- nothing and is skipped: consigning on a blank match would gamble a visible
 -- window on it.
+-- Chrome's scripting interface also middle-truncates a long tab title:
+-- "Billing exports time out in… · Northwind/Fern.Backend" for a window whose
+-- AX title carries the full text. A join blind to that reads every
+-- long-titled visible window as lost — and consigns it in plain sight.
+local ELLIPSIS = "…"
+
+local function accounts_for(title, tab)
+  if title == tab then return true end
+  if title:sub(1, #tab) == tab and title:sub(#tab + 1, #tab + 3) == " - " then
+    return true
+  end
+  local cut = tab:find(ELLIPSIS, 1, true)
+  if cut == nil then return false end
+  local head = tab:sub(1, cut - 1)
+  local tail = tab:sub(cut + #ELLIPSIS)
+  if title:sub(1, #head) ~= head then return false end
+  if tail == "" then return true end
+  -- The tail must reappear later, again at a boundary: mid-word echoes of it
+  -- do not count, so keep looking past them.
+  local from = #head + 1
+  while true do
+    local at = title:find(tail, from, true)
+    if at == nil then return false end
+    local rest = title:sub(at + #tail, at + #tail + 2)
+    if rest == "" or rest == " - " then return true end
+    from = at + 1
+  end
+end
+
 function M.unaccounted(scripted, windows)
   local pool = {}
   for _, w in ipairs(windows) do
@@ -198,9 +227,7 @@ function M.unaccounted(scripted, windows)
     if sw.title ~= "" then
       local claimed
       for i, title in ipairs(pool) do
-        if title == sw.title
-          or (title:sub(1, #sw.title) == sw.title
-              and title:sub(#sw.title + 1, #sw.title + 3) == " - ") then
+        if accounts_for(title, sw.title) then
           claimed = i
           break
         end

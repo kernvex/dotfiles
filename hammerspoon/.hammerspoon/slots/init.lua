@@ -74,12 +74,28 @@ local function resolve_freshly(request)
   -- by itself while hidden leaves the Accessibility tree entirely (see
   -- resolve.unaccounted). Launching against that blindness opens a duplicate
   -- window, so before trusting a launch, rescue whatever Chrome still admits
-  -- to and look once more. The sleep is a blocking beat on Hammerspoon's main
-  -- thread, affordable only because this path already ends in either a rescue
-  -- or a browser launch — both of which dwarf it.
+  -- to and look once more.
+  --
+  -- Sampled twice, because the two window lists cannot be read atomically: a
+  -- tab retitling between the reads looks exactly like a lost window, and
+  -- consigning that false positive minimizes a window the user can see — with
+  -- the full genie animation the solo machinery exists to avoid. A window is
+  -- only lost if both looks, a beat apart, agree it is. The sleeps are
+  -- blocking beats on Hammerspoon's main thread, affordable only because this
+  -- path already ends in either a rescue or a browser launch — both of which
+  -- dwarf them.
   local lost = resolve.unaccounted(chrome.windows(), world.windows)
   if #lost == 0 then return action, world, handles end
-  chrome.consign(lost)
+  hs.timer.usleep(150000)
+  world, handles = survey(true, true)
+  local suspect = {}
+  for _, id in ipairs(lost) do suspect[id] = true end
+  local confirmed = {}
+  for _, id in ipairs(resolve.unaccounted(chrome.windows(), world.windows)) do
+    if suspect[id] then confirmed[#confirmed + 1] = id end
+  end
+  if #confirmed == 0 then return resolve(request, world), world, handles end
+  chrome.consign(confirmed)
   hs.timer.usleep(300000)
   world, handles = survey(true, true)
   return resolve(request, world), world, handles

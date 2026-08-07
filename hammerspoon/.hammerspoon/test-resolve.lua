@@ -530,6 +530,36 @@ check("a blank tab title is never consigned",
     {}),
   {})
 
+-- Chrome's scripting interface middle-truncates long tab titles; AX carries
+-- the full text. The shape is a GitHub issue window observed live consigning
+-- as "lost" for exactly this reason (names invented, structure untouched).
+check("a middle-truncated tab title still accounts against the full AX title",
+  resolve.unaccounted(
+    { { id = 5, title = "Billing exports time out in… · Northwind/Fern.Backend",
+        minimized = false } },
+    { { id = 1, app = "Google Chrome", mru_rank = 1,
+        title = "Billing exports time out in the QA environment · Issue #3385"
+             .. " · Northwind/Fern.Backend - Google Chrome - Sam (Sam Weber (Northwind))" } }),
+  {})
+
+check("a truncated title whose head does not match stays lost",
+  resolve.unaccounted(
+    { { id = 5, title = "Something else entirely… · Northwind/Fern.Backend",
+        minimized = false } },
+    { { id = 1, app = "Google Chrome", mru_rank = 1,
+        title = "Billing exports time out in the QA environment · Issue #3385"
+             .. " · Northwind/Fern.Backend - Google Chrome - Sam (Sam Weber (Northwind))" } }),
+  { 5 })
+
+-- The tail's first echo sits mid-word; only the later, boundary-respecting
+-- occurrence may claim.
+check("a truncated tail claims at a boundary even past a mid-word echo",
+  resolve.unaccounted(
+    { { id = 5, title = "Head… Tail", minimized = false } },
+    { { id = 1, app = "Google Chrome", mru_rank = 1,
+        title = "Head one Tail two Tail - Google Chrome - Reception" } }),
+  {})
+
 check("a consistent world rescues nothing",
   resolve.unaccounted(
     { { id = 2, title = "Docs", minimized = false },
