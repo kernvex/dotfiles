@@ -78,8 +78,28 @@ function M.focus(id, handles)
   -- out of the Dock and macOS offers no off switch — but a hidden app renders
   -- nothing, so the state flips invisibly.
   if w:isMinimized() then
-    if app and not app:isHidden() then app:hide() end
+    if app and not app:isHidden() then
+      -- hide() can be rejected mid-transition (see hide_others); unminimizing
+      -- after a failed hide animates in full view, so insist once.
+      if not app:hide() then
+        hs.timer.usleep(50000)
+        app:hide()
+      end
+    end
     w:unminimize()
+    -- The restore is asynchronous, and no-animation holds only while the app
+    -- stays hidden. A freshly parked window restores before the next line
+    -- runs; one parked long enough for its backing to be purged restores
+    -- slowly, and an unhide issued mid-restore puts the tail of the animation
+    -- on screen — the stale-slot animation. So wait the restore out, bounded:
+    -- a wedged window degrades to the old animated behaviour, not a dead key.
+    if w:isMinimized() then
+      local deadline = hs.timer.absoluteTime() + 700 * 1e6
+      while w:isMinimized() and hs.timer.absoluteTime() < deadline do
+        hs.timer.usleep(30000)
+      end
+      hs.timer.usleep(120000)
+    end
   end
   if app and app:isHidden() then app:unhide() end
   w:focus()
