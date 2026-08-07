@@ -262,6 +262,26 @@ check("solo that launches keeps the browser and minimizes its current windows",
   { kind = "solo", action = { kind = "launch", profile_dir = "Profile 70" },
     keep = { ["Google Chrome"] = true }, minimize = { 200 } })
 
+-- A window the deep snapshot already saw minimized is parked; re-minimizing
+-- it buys nothing and each redundant AX write costs flip time in the beat the
+-- screen shows wallpaper.
+check("solo leaves already-minimized siblings off the minimize list",
+  resolve({ kind = "solo", slot = 2 }, {
+    slots = { [2] = { kind = "profile", dir = "Profile 70" } },
+    profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
+    windows = {
+      { id = 100, app = "Google Chrome", mru_rank = 1,
+        title = "Inbox - Google Chrome - Sam (Sam Weber (Northwind))" },
+      { id = 200, app = "Google Chrome", mru_rank = 2,
+        title = "Other - Google Chrome - Alex Rivera (Acme Group)" },
+      { id = 300, app = "Google Chrome", mru_rank = 3, minimized = true,
+        title = "Parked - Google Chrome - Alex Rivera (Acme Group)" },
+    },
+    focused = nil,
+  }),
+  { kind = "solo", action = { kind = "focus", id = 100 },
+    keep = { ["Google Chrome"] = true }, minimize = { 200 } })
+
 check("solo on a pair keeps both applications",
   resolve({ kind = "solo", slot = 7 }, {
     slots = { [7] = { kind = "pair", left = "Calendar", right = "Reminders" } },

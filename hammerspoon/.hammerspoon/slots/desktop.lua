@@ -44,7 +44,12 @@ end
 function M.snapshot_deep()
   local windows, handles = {}, {}
   local rank = 0
-  local function add(w)
+  -- minimized rides along because the caller already knows it — ordered
+  -- windows are on screen, the sweep tests it anyway — and the resolver needs
+  -- it to leave already-parked windows out of a solo's minimize list: each
+  -- redundant AX minimize costs ~15ms of flip time and re-pokes the exact
+  -- state churn the ghost-tile desync grew from.
+  local function add(w, minimized)
     local id = w:id()
     if id == nil or handles[id] then return end
     rank = rank + 1
@@ -55,13 +60,15 @@ function M.snapshot_deep()
       app = app and app:name() or "",
       title = w:title() or "",
       mru_rank = rank,
+      minimized = minimized,
     }
   end
-  for _, w in ipairs(hs.window.orderedWindows()) do add(w) end
+  for _, w in ipairs(hs.window.orderedWindows()) do add(w, false) end
   for _, app in ipairs(hs.application.runningApplications()) do
     if app:kind() == 1 then
       for _, w in ipairs(app:allWindows()) do
-        if w:isStandard() or w:isMinimized() then add(w) end
+        local minimized = w:isMinimized()
+        if w:isStandard() or minimized then add(w, minimized) end
       end
     end
   end
@@ -79,24 +86,31 @@ function M.focus(id, handles)
   -- nothing, so the state flips invisibly.
   if w:isMinimized() then
     if app and not app:isHidden() then
-      -- hide() can be rejected mid-transition (see hide_others); unminimizing
-      -- after a failed hide animates in full view, so insist once.
+      -- hide() can be rejected mid-transition — usually because the sibling
+      -- flip a moment ago hid this very app and the transition has not
+      -- committed yet. Unminimizing after a failed hide animates in full
+      -- view, so wait for the in-flight hide to land (a few ms) and only
+      -- re-issue if it never does.
       if not app:hide() then
-        hs.timer.usleep(50000)
-        app:hide()
+        local deadline = hs.timer.absoluteTime() + 150 * 1e6
+        while not app:isHidden() and hs.timer.absoluteTime() < deadline do
+          hs.timer.usleep(5000)
+        end
+        if not app:isHidden() then app:hide() end
       end
     end
     w:unminimize()
     -- The restore is asynchronous, and no-animation holds only while the app
     -- stays hidden: an unhide issued mid-restore puts the tail of the Dock
-    -- animation on screen. So wait the restore out, bounded — a wedged window
-    -- degrades to the old animated behaviour, not a dead key.
+    -- animation on screen. Wait it out — it lands in 30-90ms — but bounded,
+    -- so a wedged window degrades to the old animated behaviour, not a dead
+    -- key. Every millisecond here is wallpaper on screen: the sibling flip
+    -- already hid this app, so the poll is tight and there is no settle.
     if w:isMinimized() then
-      local deadline = hs.timer.absoluteTime() + 700 * 1e6
+      local deadline = hs.timer.absoluteTime() + 400 * 1e6
       while w:isMinimized() and hs.timer.absoluteTime() < deadline do
-        hs.timer.usleep(30000)
+        hs.timer.usleep(10000)
       end
-      hs.timer.usleep(120000)
     end
   end
   if app and app:isHidden() then app:unhide() end
@@ -118,13 +132,29 @@ end
 -- caller raises the target after this, and focus() un-hides what it raises;
 -- an activation performed before this juggling gets un-fronted by it.
 function M.flip_minimized(minimize, handles)
+  local hidden = {}
   for _, id in ipairs(minimize) do
     local w = handles and handles[id]
     local app = w and w:application()
     if app then
-      if not app:isHidden() then app:hide() end
+      if not app:isHidden() then
+        app:hide()
+        hidden[#hidden + 1] = app
+      end
       w:minimize()
     end
+  end
+  -- hide() on the frontmost app can be rejected or land late, and the next
+  -- step (focus) minimizes-and-unminimizes under the assumption this app is
+  -- already hidden — paying ~70ms for a second hide on a mid-transition app
+  -- when it is not. Committing the hide here is the same wallpaper beat, and
+  -- far cheaper than discovering it later.
+  for _, app in ipairs(hidden) do
+    local deadline = hs.timer.absoluteTime() + 100 * 1e6
+    while not app:isHidden() and hs.timer.absoluteTime() < deadline do
+      hs.timer.usleep(5000)
+    end
+    if not app:isHidden() then app:hide() end
   end
 end
 

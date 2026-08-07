@@ -153,10 +153,13 @@ local function solo(request, world)
   -- Hiding is per-application, so the kept app's other windows can only leave
   -- the backdrop by being minimized. For a focused window that is its same-app
   -- siblings; for a launch, every current browser window — the window being
-  -- launched is the one the slot wants.
+  -- launched is the one the slot wants. Windows the deep snapshot already saw
+  -- minimized stay off the list: re-minimizing them buys nothing and each
+  -- redundant AX write costs flip time in the beat the screen shows wallpaper.
   local minimize = {}
   for _, w in ipairs(world.windows) do
-    if keep[w.app] and w.id ~= focus_id and (focus_id or action.kind == "launch") then
+    if keep[w.app] and w.id ~= focus_id and not w.minimized
+      and (focus_id or action.kind == "launch") then
       minimize[#minimize + 1] = w.id
     end
   end
