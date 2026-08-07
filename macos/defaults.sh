@@ -81,22 +81,22 @@ if [ "$mru_before" != "0" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Dock: minimized windows fold into their application icon
+# Dock: minimized windows keep their own tiles — minimize-to-application stays OFF
 #
-# Solo parks a window's same-app siblings as minimized, and flips that state
-# while the app is hidden so no genie animation plays (slots/desktop.lua).
-# macOS handles that pattern badly: a parked Chrome window whose page navigates
-# itself — Teams, Outlook, anything that re-authenticates — gets restored by
-# Chrome while hidden, the Dock never processes it, and the per-window tile it
-# keeps is unremovable short of restarting the Dock. Days of solo use built a
-# Dock of 150 dead Chrome tiles this way (diagnosed 2026-08-07; no scripting
-# interface flips minimize state reliably while an app is hidden, so the tiles
-# cannot be prevented, only unshown). Folding minimized windows into the app
-# icon removes per-window tiles wholesale — parked windows are reached by
-# slot, never by Dock tile, so the tiles carried no information.
+# Asserted although false is the macOS default, because turning it on is
+# tempting and was tried (2026-08-07): it hides the per-window tiles that ghost
+# up when a parked Chrome window self-restores while Chrome is hidden. But with
+# it on, the Dock defers the restore animation of a hidden app's unminimize to
+# the moment the app unhides — every jump to a parked browser window played the
+# genie in full view, defeating the flip-while-hidden trick solo is built on
+# (slots/desktop.lua). Confirmed by A/B on this machine: the same jump is
+# silent with the key off and animated with it on. Ghost tiles are contained
+# instead by the slots rescue path (resolve.unaccounted), which keeps the
+# desync from breeding duplicate windows; a Dock already haunted by dead tiles
+# is cleared by restarting it.
 min_before="$(defaults read com.apple.dock minimize-to-application 2>/dev/null || true)"
-set_default com.apple.dock minimize-to-application -bool true
-if [ "$min_before" != "1" ]; then
+set_default com.apple.dock minimize-to-application -bool false
+if [ "$min_before" = "1" ]; then
   killall Dock 2>/dev/null || true
   echo "restarted Dock to apply minimize-to-application"
 fi

@@ -88,11 +88,9 @@ function M.focus(id, handles)
     end
     w:unminimize()
     -- The restore is asynchronous, and no-animation holds only while the app
-    -- stays hidden. A freshly parked window restores before the next line
-    -- runs; one parked long enough for its backing to be purged restores
-    -- slowly, and an unhide issued mid-restore puts the tail of the animation
-    -- on screen — the stale-slot animation. So wait the restore out, bounded:
-    -- a wedged window degrades to the old animated behaviour, not a dead key.
+    -- stays hidden: an unhide issued mid-restore puts the tail of the Dock
+    -- animation on screen. So wait the restore out, bounded — a wedged window
+    -- degrades to the old animated behaviour, not a dead key.
     if w:isMinimized() then
       local deadline = hs.timer.absoluteTime() + 700 * 1e6
       while w:isMinimized() and hs.timer.absoluteTime() < deadline do
