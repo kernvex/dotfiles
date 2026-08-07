@@ -12,4 +12,9 @@ environment, so a local would be unreachable from the very caller it exists for.
 
 require("hs.ipc")
 
+-- Window moves are teleports, not tweens: solo minimizes sibling windows and
+-- the pair slot setFrames two of them, and the default 0.2 s animation on each
+-- reads as lag in a keypress-driven flow.
+hs.window.animationDuration = 0
+
 slots = require("slots")
