@@ -193,10 +193,25 @@ check("colliding profile names refuse the jump instead of guessing",
   { kind = "none", reason = "ambiguous_signature" })
 
 -- ---------------------------------------------------------------------------
--- Solo: the jump plus backdrop-clearing instructions. The resolver decides who
--- stays visible and which same-app siblings leave; the adapters only obey.
+-- Solo: the jump plus backdrop-clearing instructions — but only where the
+-- backdrop would be seen. A translucent target (resolve's TRANSLUCENT set)
+-- or a pair's gaps show the wallpaper; an opaque target covers it, so its
+-- solo degrades to the plain jump and hides nothing.
 
-check("solo on an app slot keeps that app and hides the rest",
+check("solo on a translucent app clears the backdrop",
+  resolve({ kind = "solo", slot = 1 }, {
+    slots = { [1] = { kind = "app", name = "WezTerm" } },
+    profiles = {},
+    windows = {
+      { id = 1, app = "WezTerm", mru_rank = 1, title = "dotfiles" },
+      { id = 2, app = "Mail", mru_rank = 2, title = "Inbox" },
+    },
+    focused = nil,
+  }),
+  { kind = "solo", action = { kind = "activate_app", name = "WezTerm" },
+    keep = { WezTerm = true }, minimize = {} })
+
+check("solo on an opaque app degrades to the plain activation",
   resolve({ kind = "solo", slot = 8 }, {
     slots = { [8] = { kind = "app", name = "Slack" } },
     profiles = {},
@@ -206,12 +221,12 @@ check("solo on an app slot keeps that app and hides the rest",
     },
     focused = nil,
   }),
-  { kind = "solo", action = { kind = "activate_app", name = "Slack" },
-    keep = { Slack = true }, minimize = {} })
+  { kind = "activate_app", name = "Slack" })
 
--- Hiding is per-application, so the browser's other identities can only leave
--- the backdrop by being minimized — and only they do; the target stays up.
-check("solo on a browser identity minimizes the browser's other windows",
+-- Browser windows are opaque: the raised target covers its siblings, so none
+-- of them is minimized — the state churn that Chrome's self-restoring pages
+-- turned into ghost tiles and lost windows simply never starts.
+check("solo on a browser identity raises it and minimizes nothing",
   resolve({ kind = "solo", slot = 2 }, {
     slots = { [2] = { kind = "profile", dir = "Profile 70" } },
     profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
@@ -224,15 +239,11 @@ check("solo on a browser identity minimizes the browser's other windows",
     },
     focused = nil,
   }),
-  { kind = "solo", action = { kind = "focus", id = 100 },
-    keep = { ["Google Chrome"] = true }, minimize = { 200 } })
+  { kind = "focus", id = 100 })
 
--- Already being there is not a reason to skip: clearing the backdrop is the
--- half of solo that jump does not already do. And it must resolve to a real
--- focus, not already_there — the clear hides the target's own app to flip
--- sibling state off-screen, so raising the target back out is what makes the
--- press visible.
-check("solo on the slot you are in still clears the backdrop",
+-- With nothing to clear there is also nothing to re-reveal: solo on the
+-- opaque slot you already occupy stays a silent no-op, exactly like jump.
+check("solo on the opaque slot you are in stays a no-op",
   resolve({ kind = "solo", slot = 2 }, {
     slots = { [2] = { kind = "profile", dir = "Profile 70" } },
     profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
@@ -244,12 +255,11 @@ check("solo on the slot you are in still clears the backdrop",
     },
     focused = 100,
   }),
-  { kind = "solo", action = { kind = "focus", id = 100 },
-    keep = { ["Google Chrome"] = true }, minimize = { 200 } })
+  { kind = "none", reason = "already_there" })
 
--- The launched window is the one the slot wants, so every current browser
--- window is backdrop.
-check("solo that launches keeps the browser and minimizes its current windows",
+-- A launched browser window arrives opaque and in front; the current ones
+-- are covered, not minimized.
+check("solo that launches degrades to the plain launch",
   resolve({ kind = "solo", slot = 2 }, {
     slots = { [2] = { kind = "profile", dir = "Profile 70" } },
     profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
@@ -259,28 +269,7 @@ check("solo that launches keeps the browser and minimizes its current windows",
     },
     focused = nil,
   }),
-  { kind = "solo", action = { kind = "launch", profile_dir = "Profile 70" },
-    keep = { ["Google Chrome"] = true }, minimize = { 200 } })
-
--- A window the deep snapshot already saw minimized is parked; re-minimizing
--- it buys nothing and each redundant AX write costs flip time in the beat the
--- screen shows wallpaper.
-check("solo leaves already-minimized siblings off the minimize list",
-  resolve({ kind = "solo", slot = 2 }, {
-    slots = { [2] = { kind = "profile", dir = "Profile 70" } },
-    profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
-    windows = {
-      { id = 100, app = "Google Chrome", mru_rank = 1,
-        title = "Inbox - Google Chrome - Sam (Sam Weber (Northwind))" },
-      { id = 200, app = "Google Chrome", mru_rank = 2,
-        title = "Other - Google Chrome - Alex Rivera (Acme Group)" },
-      { id = 300, app = "Google Chrome", mru_rank = 3, minimized = true,
-        title = "Parked - Google Chrome - Alex Rivera (Acme Group)" },
-    },
-    focused = nil,
-  }),
-  { kind = "solo", action = { kind = "focus", id = 100 },
-    keep = { ["Google Chrome"] = true }, minimize = { 200 } })
+  { kind = "launch", profile_dir = "Profile 70" })
 
 check("solo on a pair keeps both applications",
   resolve({ kind = "solo", slot = 7 }, {

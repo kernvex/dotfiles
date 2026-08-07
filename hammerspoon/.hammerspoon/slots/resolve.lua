@@ -124,6 +124,30 @@ end
 -- alone with; every other action passes through undecorated and unclears nothing.
 local BACKDROP_SAFE = { focus = true, activate_app = true, activate_pair = true, launch = true }
 
+-- The applications whose windows show what is behind them — this repo itself
+-- makes them so (wezterm.lua sets window_background_opacity), so the set is
+-- repo knowledge, not machine configuration. It gates which solos clear the
+-- backdrop at all: behind an opaque window the backdrop is invisible, so
+-- clearing it buys nothing and costs everything — the pre-raise hide that
+-- flashes wallpaper, and the sibling minimize whose state churn is what
+-- Chrome's self-restoring pages turn into ghost tiles and lost windows.
+local TRANSLUCENT = { WezTerm = true }
+
+-- Whether the wallpaper would actually be seen behind this action's outcome.
+-- A pair shows it by construction: two windows tiled under Rectangle's gap
+-- policy hold a strip of desktop open between and around them. A launch is a
+-- fresh opaque browser window. A focus or activation shows it only when the
+-- app is translucent.
+local function wants_clearing(action, world)
+  if action.kind == "activate_pair" then return true end
+  if action.kind == "activate_app" then return TRANSLUCENT[action.name] == true end
+  if action.kind == "launch" then return false end
+  for _, w in ipairs(world.windows) do
+    if w.id == action.id then return TRANSLUCENT[w.app] == true end
+  end
+  return false
+end
+
 -- Which applications must stay visible, and — when the target is one specific
 -- window — that window's id, so its same-app siblings can be minimized.
 local function keep_of(action, world)
@@ -144,9 +168,14 @@ local function solo(request, world)
   -- Clearing the backdrop hides the target's own app to flip sibling state
   -- off-screen, so "already there" must become a real focus: raising the
   -- target back out is the step that makes the press visible.
+  local raised = action
   if action.reason == "already_there" then
-    action = { kind = "focus", id = world.focused }
+    raised = { kind = "focus", id = world.focused }
   end
+  -- An opaque target covers the backdrop instead: solo degrades to the plain
+  -- jump, and "already there" stays a no-op — there is nothing to re-reveal.
+  if not wants_clearing(raised, world) then return action end
+  action = raised
   local keep, focus_id = keep_of(action, world)
   if keep == nil then return action end
 

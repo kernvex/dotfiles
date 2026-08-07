@@ -133,12 +133,16 @@ end
 -- minimize state off-screen (this may hide the target's own app, so it must
 -- precede the raise), raise the target, and only then hide everything else —
 -- background apps vanish behind an already-front window, and hiding them
--- steals nothing from it. A solo that cannot reach a window degrades to
--- exactly what jump would have said, complaint included, and hides nothing.
+-- steals nothing from it.
+--
+-- The resolver only decorates a solo when the wallpaper would be seen behind
+-- the target (resolve's TRANSLUCENT set; pairs by construction). An opaque
+-- target arrives as the plain jump action and is performed as one — covering
+-- the backdrop instead of clearing it, so nothing hides, flips, or flashes.
 function M.solo(digit)
   local action, _, handles = resolve_freshly({ kind = "solo", slot = digit })
   if action.kind ~= "solo" then
-    complain(action, digit)
+    perform(action, handles, digit)
     return
   end
   desktop.flip_minimized(action.minimize, handles)
