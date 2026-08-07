@@ -72,16 +72,25 @@ end
 function M.focus(id, handles)
   local w = handles and handles[id] or hs.window.get(id)
   if w == nil then return false end
+  local app = w:application()
   -- A window solo minimized must come back out of the Dock: focus alone raises
   -- and activates but never unminimizes. Unminimizing a visible app animates
   -- out of the Dock and macOS offers no off switch — but a hidden app renders
-  -- nothing, so the state flips invisibly and focus() un-hides the result.
+  -- nothing, so the state flips invisibly.
   if w:isMinimized() then
-    local app = w:application()
     if app and not app:isHidden() then app:hide() end
     w:unminimize()
   end
+  if app and app:isHidden() then app:unhide() end
   w:focus()
+  -- A solo hides the frontmost app just before this runs, and macOS promotes
+  -- Finder in the same beat — an activation raced against that promotion
+  -- loses, leaving the window correct but behind. Don't race it: re-assert
+  -- once, after the promotion has settled.
+  hs.timer.doAfter(0.15, function()
+    local focused = hs.window.focusedWindow()
+    if focused == nil or focused:id() ~= id then w:focus() end
+  end)
   return true
 end
 
@@ -92,33 +101,23 @@ end
 --
 -- Minimizing a visible window animates into the Dock and macOS offers no off
 -- switch. A hidden app renders nothing, so the same state change made while
--- its app is hidden shows no animation at all — hence the order below: hide
--- everything outside the keep set, briefly hide the sibling windows' own apps
--- too while they minimize off-screen, then re-activate those apps so the
--- surviving window snaps back. Hide and unhide are both instant, so the whole
--- clear is one swap rather than a cascade of genies.
+-- its app is hidden shows no animation at all — hence: hide everything
+-- outside the keep set, and hide the sibling windows' own apps too while they
+-- minimize off-screen. Nothing here unhides. The caller raises the target
+-- AFTER this, as its final act: focus() un-hides the kept app, and an
+-- activation raced against this juggling loses often enough that the press
+-- looks dead (Chrome ends correct-but-behind with Finder frontmost).
 function M.clear_backdrop(keep, minimize, handles)
   for _, app in ipairs(hs.application.runningApplications()) do
     if app:kind() == 1 and not keep[app:name()] then app:hide() end
   end
-  if #minimize == 0 then return end
-
-  local owners, order = {}, {}
   for _, id in ipairs(minimize) do
     local w = handles and handles[id]
     local app = w and w:application()
     if app then
-      if not owners[app:pid()] then
-        owners[app:pid()] = true
-        order[#order + 1] = app
-        if not app:isHidden() then app:hide() end
-      end
+      if not app:isHidden() then app:hide() end
       w:minimize()
     end
-  end
-  for _, app in ipairs(order) do
-    app:unhide()
-    app:activate()
   end
 end
 

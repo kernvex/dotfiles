@@ -141,6 +141,12 @@ local function solo(request, world)
   if not (BACKDROP_SAFE[action.kind] or action.reason == "already_there") then
     return action
   end
+  -- Clearing the backdrop hides the target's own app to flip sibling state
+  -- off-screen, so "already there" must become a real focus: raising the
+  -- target back out is the step that makes the press visible.
+  if action.reason == "already_there" then
+    action = { kind = "focus", id = world.focused }
+  end
   local keep, focus_id = keep_of(action, world)
   if keep == nil then return action end
 

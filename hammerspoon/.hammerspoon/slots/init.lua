@@ -98,17 +98,20 @@ function M.jump(digit)
   perform(action, handles, digit)
 end
 
--- The jump, then the backdrop clears so the wallpaper shows through the
--- translucent window. A solo that cannot reach a window degrades to exactly
--- what jump would have said, complaint included, and hides nothing.
+-- The backdrop clears first, and raising the target is the LAST operation —
+-- clear_backdrop hides the target's own app to flip sibling windows
+-- off-screen, and anything performed before it gets un-fronted again: the
+-- press lands with the right window on top of a hidden app and Finder
+-- frontmost. A solo that cannot reach a window degrades to exactly what jump
+-- would have said, complaint included, and hides nothing.
 function M.solo(digit)
   local action, _, handles = resolve_freshly({ kind = "solo", slot = digit })
   if action.kind ~= "solo" then
     complain(action, digit)
     return
   end
-  perform(action.action, handles, digit)
   desktop.clear_backdrop(action.keep, action.minimize, handles)
+  perform(action.action, handles, digit)
 end
 
 function M.pin(digit)

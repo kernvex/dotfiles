@@ -228,7 +228,10 @@ check("solo on a browser identity minimizes the browser's other windows",
     keep = { ["Google Chrome"] = true }, minimize = { 200 } })
 
 -- Already being there is not a reason to skip: clearing the backdrop is the
--- half of solo that jump does not already do.
+-- half of solo that jump does not already do. And it must resolve to a real
+-- focus, not already_there — the clear hides the target's own app to flip
+-- sibling state off-screen, so raising the target back out is what makes the
+-- press visible.
 check("solo on the slot you are in still clears the backdrop",
   resolve({ kind = "solo", slot = 2 }, {
     slots = { [2] = { kind = "profile", dir = "Profile 70" } },
@@ -241,7 +244,7 @@ check("solo on the slot you are in still clears the backdrop",
     },
     focused = 100,
   }),
-  { kind = "solo", action = { kind = "none", reason = "already_there" },
+  { kind = "solo", action = { kind = "focus", id = 100 },
     keep = { ["Google Chrome"] = true }, minimize = { 200 } })
 
 -- The launched window is the one the slot wants, so every current browser
