@@ -91,15 +91,23 @@ fi
 #
 # gapSize is Rectangle's "Gaps between windows" and by default it also applies
 # to Maximize (Rectangle's TerminalCommands.md) — that behaviour is the point
-# here, so never set applyGapsToMaximize. Rectangle reads gapSize at launch,
-# hence the restart when the value moves.
+# here, so never set applyGapsToMaximize.
+#
+# skipGapTopEdge drops the gap on the top edge only: the menu bar already
+# provides the top spacing, so a top gap would double it. The key exists only
+# in Rectangle >= 0.97 (Defaults.swift); on an older build it is silently
+# ignored and the top gap comes back.
+#
+# Rectangle reads both at launch, hence the restart when either value moves.
 gap_before="$(defaults read com.knollsoft.Rectangle gapSize 2>/dev/null || true)"
+skiptop_before="$(defaults read com.knollsoft.Rectangle skipGapTopEdge 2>/dev/null || true)"
 set_default com.knollsoft.Rectangle gapSize -float 30
-if [ "$gap_before" != "30" ]; then
+set_default com.knollsoft.Rectangle skipGapTopEdge -bool true
+if [ "$gap_before" != "30" ] || [ "$skiptop_before" != "1" ]; then
   killall Rectangle 2>/dev/null || true
   sleep 1
   open -a Rectangle 2>/dev/null || true
-  echo "restarted Rectangle to apply gapSize"
+  echo "restarted Rectangle to apply gap settings"
 fi
 
 if [ "$changed" -eq 1 ]; then
