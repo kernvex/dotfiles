@@ -94,23 +94,12 @@ function M.focus(id, handles)
   return true
 end
 
--- kind() == 1 keeps this to ordinary Dock applications: hiding an accessory or
--- background process is at best a no-op and at worst pulls a menu-bar app's
--- panel out from under it. Hidden apps un-hide themselves on activation, so a
--- later jump to any of them needs no undo step here.
---
 -- Minimizing a visible window animates into the Dock and macOS offers no off
 -- switch. A hidden app renders nothing, so the same state change made while
--- its app is hidden shows no animation at all — hence: hide everything
--- outside the keep set, and hide the sibling windows' own apps too while they
--- minimize off-screen. Nothing here unhides. The caller raises the target
--- AFTER this, as its final act: focus() un-hides the kept app, and an
--- activation raced against this juggling loses often enough that the press
--- looks dead (Chrome ends correct-but-behind with Finder frontmost).
-function M.clear_backdrop(keep, minimize, handles)
-  for _, app in ipairs(hs.application.runningApplications()) do
-    if app:kind() == 1 and not keep[app:name()] then app:hide() end
-  end
+-- its app is hidden shows no animation at all. Nothing here unhides — the
+-- caller raises the target after this, and focus() un-hides what it raises;
+-- an activation performed before this juggling gets un-fronted by it.
+function M.flip_minimized(minimize, handles)
   for _, id in ipairs(minimize) do
     local w = handles and handles[id]
     local app = w and w:application()
@@ -118,6 +107,35 @@ function M.clear_backdrop(keep, minimize, handles)
       if not app:isHidden() then app:hide() end
       w:minimize()
     end
+  end
+end
+
+-- kind() == 1 keeps this to ordinary Dock applications: hiding an accessory or
+-- background process is at best a no-op and at worst pulls a menu-bar app's
+-- panel out from under it. Hidden apps un-hide themselves on activation, so a
+-- later jump to any of them needs no undo step here.
+--
+-- Runs AFTER the target is raised, never before: hiding a background app
+-- steals nothing from the frontmost one, so the backdrop vanishes behind the
+-- already-front target — no beat of bare desktop, no activation to race. Only
+-- hiding the frontmost app promotes Finder, and by now the frontmost app is
+-- the one in the keep set.
+-- hide() can return false: an app entangled in the same beat's activation
+-- transition (the one just un-fronted, or the one being raised) rejects the
+-- AX call. A missed hide is not cosmetic — it inherits frontmost the next
+-- time the kept app gets hidden for a sibling flip, which reads as a dead
+-- keypress. So misses are retried once, deferred past the transition.
+function M.hide_others(keep)
+  local missed = {}
+  for _, app in ipairs(hs.application.runningApplications()) do
+    if app:kind() == 1 and not keep[app:name()] and not app:isHidden() then
+      if not app:hide() then missed[#missed + 1] = app end
+    end
+  end
+  if #missed > 0 then
+    hs.timer.doAfter(0.25, function()
+      for _, app in ipairs(missed) do app:hide() end
+    end)
   end
 end
 

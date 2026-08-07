@@ -98,20 +98,21 @@ function M.jump(digit)
   perform(action, handles, digit)
 end
 
--- The backdrop clears first, and raising the target is the LAST operation —
--- clear_backdrop hides the target's own app to flip sibling windows
--- off-screen, and anything performed before it gets un-fronted again: the
--- press lands with the right window on top of a hidden app and Finder
--- frontmost. A solo that cannot reach a window degrades to exactly what jump
--- would have said, complaint included, and hides nothing.
+-- Ordered so the screen never shows bare desktop: flip the sibling windows'
+-- minimize state off-screen (this may hide the target's own app, so it must
+-- precede the raise), raise the target, and only then hide everything else —
+-- background apps vanish behind an already-front window, and hiding them
+-- steals nothing from it. A solo that cannot reach a window degrades to
+-- exactly what jump would have said, complaint included, and hides nothing.
 function M.solo(digit)
   local action, _, handles = resolve_freshly({ kind = "solo", slot = digit })
   if action.kind ~= "solo" then
     complain(action, digit)
     return
   end
-  desktop.clear_backdrop(action.keep, action.minimize, handles)
+  desktop.flip_minimized(action.minimize, handles)
   perform(action.action, handles, digit)
+  desktop.hide_others(action.keep)
 end
 
 function M.pin(digit)
