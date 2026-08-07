@@ -80,6 +80,28 @@ if [ "$mru_before" != "0" ]; then
   echo "restarted Dock to apply mru-spaces"
 fi
 
+# ---------------------------------------------------------------------------
+# Rectangle window gaps
+#
+# 30 is not taste: it is this display's menu bar height (measured via System
+# Events at the 1920x1080 looks-like scaling), so a snapped window keeps the same
+# breathing room on every edge that the menu bar imposes on top. Re-measure
+# before changing displays/scaling: osascript -e 'tell application "System
+# Events" to get size of menu bar 1 of application process "Finder"'.
+#
+# gapSize is Rectangle's "Gaps between windows" and by default it also applies
+# to Maximize (Rectangle's TerminalCommands.md) — that behaviour is the point
+# here, so never set applyGapsToMaximize. Rectangle reads gapSize at launch,
+# hence the restart when the value moves.
+gap_before="$(defaults read com.knollsoft.Rectangle gapSize 2>/dev/null || true)"
+set_default com.knollsoft.Rectangle gapSize -float 30
+if [ "$gap_before" != "30" ]; then
+  killall Rectangle 2>/dev/null || true
+  sleep 1
+  open -a Rectangle 2>/dev/null || true
+  echo "restarted Rectangle to apply gapSize"
+fi
+
 if [ "$changed" -eq 1 ]; then
   echo "NOTE: key repeat changes apply to newly launched apps; log out and back in for a full effect."
 fi
