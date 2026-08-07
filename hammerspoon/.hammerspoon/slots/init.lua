@@ -81,6 +81,8 @@ function M.jump(digit)
     end
   elseif action.kind == "activate_app" then
     desktop.activate_app(action.name)
+  elseif action.kind == "activate_pair" then
+    desktop.activate_pair(action.left, action.right)
   elseif action.kind == "launch" then
     desktop.launch_profile(action.profile_dir)
   else

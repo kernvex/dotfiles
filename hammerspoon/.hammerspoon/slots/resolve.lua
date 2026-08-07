@@ -82,6 +82,12 @@ local function jump(request, world)
     return { kind = "activate_app", name = target.name }
   end
 
+  -- No already_there for a pair: re-activating also re-tiles, so pressing the
+  -- slot again is how a drifted layout gets healed rather than a case to skip.
+  if target.kind == "pair" then
+    return { kind = "activate_pair", left = target.left, right = target.right }
+  end
+
   local profile = world.profiles[target.dir]
   if profile == nil then
     -- Launching an unknown directory would make Chrome create a fresh empty

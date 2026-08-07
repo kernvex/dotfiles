@@ -18,6 +18,10 @@ currently calls that profile.
   kind = "profile"  only this Chrome profile's window counts. `dir` is Chrome's
                     own directory name, durable and meaningless; the profile
                     name is resolved live and may be renamed freely.
+  kind = "pair"     two applications tiled left/right under Rectangle's gap
+                    policy. The one kind written by hand — a pin can only
+                    capture the single focused window — but pins on other
+                    slots preserve it.
 ]]
 
 return {
@@ -27,7 +31,8 @@ return {
   [3] = { kind = "profile", dir = "Profile 72" }, -- Alex Rivera (Acme Group)
   [4] = { kind = "profile", dir = "Default" }, -- Personal
   [5] = { kind = "profile", dir = "Profile 14" }, -- Jo Marsh - Fernwood
-  -- 6 and 7 deliberately free
+  -- 6 deliberately free
+  [7] = { kind = "pair", left = "Calendar", right = "Reminders" },
   [8] = { kind = "app", name = "Slack" },
   [9] = { kind = "app", name = "Telegram" },
 }

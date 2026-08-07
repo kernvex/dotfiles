@@ -67,6 +67,22 @@ check("an application target is activated by name",
             profiles = {}, windows = {}, focused = nil }),
   { kind = "activate_app", name = "Slack" })
 
+check("a pair target activates both applications for side-by-side tiling",
+  resolve({ kind = "jump", slot = 7 },
+          { slots = { [7] = { kind = "pair", left = "Calendar", right = "Reminders" } },
+            profiles = {}, windows = {}, focused = nil }),
+  { kind = "activate_pair", left = "Calendar", right = "Reminders" })
+
+-- Re-activating a pair also re-tiles it, so "already in it" is not a case to
+-- skip: pressing the slot again is how a drifted layout gets healed.
+check("a pair target re-activates even when one of its windows is focused",
+  resolve({ kind = "jump", slot = 7 },
+          { slots = { [7] = { kind = "pair", left = "Calendar", right = "Reminders" } },
+            profiles = {},
+            windows = { { id = 9, app = "Reminders", mru_rank = 1, title = "Reminders" } },
+            focused = 9 }),
+  { kind = "activate_pair", left = "Calendar", right = "Reminders" })
+
 -- A signed-in profile signs its windows "<given name> (<profile name>)". This
 -- profile name also contains parentheses, so the signature nests them — the
 -- shape that defeats any rule keyed on "the last parenthesised group".

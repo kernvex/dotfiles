@@ -35,6 +35,12 @@ local function entry_source(target, profiles)
   if target.kind == "app" then
     return string.format("{ kind = \"app\", name = %q },", target.name)
   end
+  -- Pairs are written by hand (a pin captures one window), but a save must
+  -- still re-emit them: it regenerates the whole file, and dropping the entry
+  -- here would mean any pin on any slot silently unbinds every pair.
+  if target.kind == "pair" then
+    return string.format("{ kind = \"pair\", left = %q, right = %q },", target.left, target.right)
+  end
   local source = string.format("{ kind = \"profile\", dir = %q },", target.dir)
   local profile = profiles and profiles[target.dir]
   if profile and profile.name ~= "" then
