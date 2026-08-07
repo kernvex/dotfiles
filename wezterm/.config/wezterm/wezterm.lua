@@ -93,7 +93,7 @@ return {
   -- Translucency. Opacity below 1.0 is what activates the blur; blur is the
   -- radius macOS composites behind the window, not a percentage. 0.9/30 is the
   -- common readable pairing — lower opacity trades text contrast for see-through.
-  window_background_opacity = 0.85,
+  window_background_opacity = 0.90,
   macos_window_background_blur = 30,
 
   native_macos_fullscreen_mode = true,
