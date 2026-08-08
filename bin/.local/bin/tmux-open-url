@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# tmux-open-url — pick a link out of the pane you are looking at, and open it in
+# the browser identity that pane's directory belongs to.
+#
+#   tmux-open-url <pane-id>   scrape that pane, pick through fzf, open or copy
+#   tmux-open-url --extract   read text on stdin, print the candidate list
+#
+# Bound to prefix+u through `display-popup`, which is what gives fzf a real tty;
+# `run-shell` does not, and a picker bound that way silently does nothing. The
+# same lesson is already recorded against `bind f` in .tmux.conf.
+#
+# THE PANE ID IS AN ARGUMENT, and has to be. Inside a popup $TMUX_PANE names the
+# POPUP, not the pane you were reading, so a capture that trusted the environment
+# would faithfully scrape an empty box and report no links.
+#
+# Routing is by directory, so this works only alongside the private `identity`
+# repo. Without it the link still opens — see open_link — because a link opener
+# that refuses to open links on a machine that never had that repo is a worse bug
+# than the routing it is protecting.
+set -euo pipefail
+
+# How far back to look. Not a speed limit at ordinary depth: capturing 2000 lines
+# of a 6653-line pane measured 6.7 ms against 12.9 ms for the whole thing. It is a
+# bound against `history-limit 200000`, where the whole thing is ~20 MB — and 2000
+# lines is already far more transcript than anyone scrolls looking for a link.
+DEPTH=2000
+
+# --------------------------------------------------------------- extraction ---
+#
+# The pure part, and the only part with a test: text in, candidate list out.
+# `--extract` is how tests/test-tmux-open-url.sh drives it without tmux, a pane,
+# or a browser.
+#
+# Three passes, in this order:
+#   strip trailing punctuation — a URL ending a sentence collects the full stop,
+#     and `)` because a link inside parentheses is the common case in prose. The
+#     cost is a genuine trailing paren in a URL, which is rare and visible in the
+#     picker before you press Enter.
+#   reverse — the link you want is nearly always the one just printed.
+#   dedupe, keeping the first survivor, which after the reversal is the most
+#     recent occurrence rather than the oldest.
+# A backslash ends a match along with the quotes and brackets. It is never valid
+# in a URL — it percent-encodes — and a pane is full of text where one follows a
+# link immediately: shell command lines with `\n` in them, JSON payloads, escaped
+# output. Found live, where a pane echoing a printf produced the candidate
+# `https://old.example/1\nsee`.
+extract() {
+  grep -oE '(https?://|mailto:)[^[:space:]<>"'"'"'`\\]+' \
+    | sed -E 's/[].,;:!?)}'"'"'"]+$//' \
+    | awk 'NF' \
+    | awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) print a[i] }' \
+    | awk '!seen[$0]++'
+}
+
+# ------------------------------------------------------------------ opening ---
+#
+# `identity` routes the link to the Chrome profile this directory belongs to.
+# Absent — which is every machine but this one, since that repo is private — fall
+# through to the system handler and open the link unrouted.
+open_link() { # <url> <dir>
+  local url="$1" dir="$2"
+  if command -v identity >/dev/null 2>&1; then
+    identity browser open --from "$dir" "$url"
+  elif command -v open >/dev/null 2>&1; then
+    open "$url"
+  else
+    xdg-open "$url"
+  fi
+}
+
+copy_link() { # <url>
+  if command -v pbcopy >/dev/null 2>&1; then printf '%s' "$1" | pbcopy
+  else tmux set-buffer -- "$1"; fi
+}
+
+# --------------------------------------------------------------------- main ---
+
+if [ "${1:-}" = "--extract" ]; then extract; exit 0; fi
+
+pane="${1:-}"
+[ -n "$pane" ] || { echo "usage: tmux-open-url <pane-id> | --extract" >&2; exit 2; }
+
+# -J joins wrapped lines, so a URL broken across the pane width survives as one
+# string. No -e: escape sequences would otherwise land in the middle of a match.
+urls="$(tmux capture-pane -p -J -S "-$DEPTH" -t "$pane" | extract)"
+
+if [ -z "$urls" ]; then
+  echo "no links in the last $DEPTH lines of this pane"
+  # Without this the popup closes the instant it opens and the message is never
+  # seen, which reads as the key doing nothing at all.
+  read -r -n 1 -s -p "press any key"
+  exit 0
+fi
+
+# The pane's directory, not the popup's. A popup does inherit it, measured — but
+# saying so outright costs nothing and does not rely on that staying true.
+dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
+
+# --expect makes fzf print the key that closed it on the first line, so one
+# picker serves both verbs.
+selection="$(printf '%s\n' "$urls" \
+  | fzf --expect=ctrl-y --reverse --height=100% \
+        --prompt='open > ' \
+        --header='enter opens in this folder'"'"'s browser · ctrl-y copies')" || exit 0
+
+key="$(printf '%s\n' "$selection" | sed -n '1p')"
+url="$(printf '%s\n' "$selection" | sed -n '2p')"
+[ -n "$url" ] || exit 0
+
+if [ "$key" = "ctrl-y" ]; then copy_link "$url"; else open_link "$url" "$dir"; fi

@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Tests for tmux-open-url's extraction — the pure seam.
+#
+#   ./test-tmux-open-url     exit 0 = pass
+#
+# Text in, candidate list out. No tmux, no pane, no browser: every case is a here
+# doc piped through `--extract`, so this says the same thing on a machine with no
+# tmux session running at all.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUT="$HERE/tmux-open-url"
+[ -x "$SUT" ] || { echo "cannot find tmux-open-url beside this test"; exit 1; }
+
+PASS=0
+FAIL=0
+
+expect() { # <description> <input> <expected output, newline separated>
+  local what="$1" input="$2" want="$3" got
+  got="$(printf '%s' "$input" | "$SUT" --extract 2>&1)"
+  if [ "$got" = "$want" ]; then
+    PASS=$((PASS + 1))
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$what" "${want//$'\n'/ | }" "${got//$'\n'/ | }"
+  fi
+}
+
+expect "a bare url is found" \
+  'see https://example.com/a for details' \
+  'https://example.com/a'
+
+expect "http and https both count" \
+  'http://a.example/1
+https://b.example/2' \
+  'https://b.example/2
+http://a.example/1'
+
+expect "mailto is a link too" \
+  'write to mailto:someone@example.com about it' \
+  'mailto:someone@example.com'
+
+expect "a bare word is not a link" \
+  'example.com is not matched without a scheme' \
+  ''
+
+# Most-recent-first. The link you want is nearly always the one just printed, and
+# a picker that made you scroll past an hour of transcript to reach it would be
+# worse than typing the URL.
+expect "the newest link is offered first" \
+  'https://old.example/1
+https://mid.example/2
+https://new.example/3' \
+  'https://new.example/3
+https://mid.example/2
+https://old.example/1'
+
+# Deduped, and the survivor is the RECENT one. Reversing before deduping is what
+# makes that true; deduping first would keep the oldest and then reverse it to
+# the bottom of the list.
+expect "a repeated link appears once, at its most recent position" \
+  'https://dup.example/x
+https://other.example/y
+https://dup.example/x' \
+  'https://dup.example/x
+https://other.example/y'
+
+# A URL ending a sentence collects the full stop; one inside prose collects the
+# closing paren. Neither belongs to the link.
+expect "a trailing full stop is not part of the url" \
+  'go to https://example.com/page.' \
+  'https://example.com/page'
+
+expect "a trailing paren is not part of the url" \
+  'the docs (see https://example.com/docs) explain it' \
+  'https://example.com/docs'
+
+expect "trailing comma and semicolon go too" \
+  'https://a.example/1, https://b.example/2;' \
+  'https://b.example/2
+https://a.example/1'
+
+expect "a path that really ends in a slash keeps it" \
+  'https://example.com/dir/' \
+  'https://example.com/dir/'
+
+# Quotes and angle brackets are delimiters in every context these appear in —
+# HTML source, JSON payloads, shell output.
+expect "a url in quotes comes out unquoted" \
+  '"url": "https://example.com/api?k=v&x=1"' \
+  'https://example.com/api?k=v&x=1'
+
+expect "a url in angle brackets is unwrapped" \
+  'see <https://example.com/rfc> for the spec' \
+  'https://example.com/rfc'
+
+expect "query strings and fragments survive" \
+  'https://example.com/s?q=a+b&n=2#frag' \
+  'https://example.com/s?q=a+b&n=2#frag'
+
+expect "two links on one line are both found" \
+  'first https://a.example/1 then https://b.example/2 done' \
+  'https://b.example/2
+https://a.example/1'
+
+# A pane holds the command lines you typed, not only their output, and those are
+# full of escapes. Found live: a pane echoing a printf yielded the candidates
+# 'https://old.example/1\nsee' and 'https://new.example/3.\n' before a backslash
+# was made a delimiter.
+expect "a literal backslash escape ends the url" \
+  'printf "go to https://a.example/1\nthen https://b.example/2\n"' \
+  'https://b.example/2
+https://a.example/1'
+
+expect "a backslash-terminated url still dedupes against its clean twin" \
+  'https://a.example/1
+printf "https://a.example/1\n"' \
+  'https://a.example/1'
+
+expect "no links at all produces nothing" \
+  'just some ordinary terminal output
+with no links in it' \
+  ''
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]
