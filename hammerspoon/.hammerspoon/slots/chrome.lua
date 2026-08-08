@@ -74,20 +74,54 @@ function M.windows()
   return list
 end
 
--- Park these windows (Chrome window ids) as minimized, through Chrome itself:
+-- Minimize or restore these windows (Chrome window ids) through Chrome itself:
 -- a window AX has lost cannot be reached by any hs.window call, but Chrome
--- still owns it, and minimizing re-registers it with the window server —
--- after which the deep sweep sees it and a slot can raise it normally.
--- `try` per window: an id can go stale between the survey and this call.
-function M.consign(ids)
+-- still owns it. `try` per window: an id can go stale between the survey and
+-- this call.
+local function set_minimized(ids, state)
   if #ids == 0 then return end
   local lines = { 'tell application "Google Chrome"' }
   for _, id in ipairs(ids) do
     lines[#lines + 1] = string.format(
-      "  try\n    set minimized of window id %d to true\n  end try", id)
+      "  try\n    set minimized of window id %d to %s\n  end try", id, state)
   end
   lines[#lines + 1] = "end tell"
   hs.osascript.applescript(table.concat(lines, "\n"))
+end
+
+-- Consign a lost window to the Dock: minimizing re-registers it with the
+-- window server, after which the deep sweep sees it and a slot can raise it
+-- normally.
+function M.consign(ids)
+  set_minimized(ids, "true")
+end
+
+-- Undo the consign once it has re-registered the windows. Left parked, a
+-- consigned window is a Dock tile plus exactly the state Teams/Outlook pages
+-- un-minimize by themselves — and that self-restore under a hidden Chrome is
+-- what loses the window again and orphans the tile. Each rescue of the same
+-- window then mints a fresh tile: they accumulate one per cycle, without
+-- bound (observed: 105 tiles standing for 6 windows). Restored to a plain
+-- window it draws nothing while Chrome stays hidden, leaves no tile behind,
+-- and has no minimized state for a page to self-restore out of.
+--
+-- Chrome is hidden first (committed, bounded — same discipline as
+-- desktop.flip_minimized): un-minimizing under a visible Chrome plays the
+-- genie animation out of the Dock in plain sight. Nothing here unhides —
+-- every action the rescue path can end in (focus, launch) unhides Chrome
+-- itself, and the complaint cases leave it hidden exactly as a solo would.
+function M.release(ids)
+  if #ids == 0 then return end
+  local app = hs.application.get("Google Chrome")
+  if app and not app:isHidden() then
+    app:hide()
+    local deadline = hs.timer.absoluteTime() + 150 * 1e6
+    while not app:isHidden() and hs.timer.absoluteTime() < deadline do
+      hs.timer.usleep(5000)
+    end
+    if not app:isHidden() then app:hide() end
+  end
+  set_minimized(ids, "false")
 end
 
 return M

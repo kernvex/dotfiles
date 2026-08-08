@@ -95,9 +95,30 @@ local function resolve_freshly(request)
     if suspect[id] then confirmed[#confirmed + 1] = id end
   end
   if #confirmed == 0 then return resolve(request, world), world, handles end
+  -- Consign to re-register, then release: parked-for-good was how Dock tiles
+  -- leaked, one per rescue of the same self-restoring page (see
+  -- chrome.release). The beat between the two lets the window server absorb
+  -- the minimize before it is reversed.
   chrome.consign(confirmed)
   hs.timer.usleep(300000)
-  world, handles = survey(true, true)
+  chrome.release(confirmed)
+  -- A released window re-enters the Accessibility tree late — measured at
+  -- 0.9-1.2s — and until it does it still reads as lost: resolving against
+  -- that gap launches the very duplicate the rescue exists to prevent. Poll
+  -- until every released window is accounted for, bounded so a window that
+  -- never re-registers degrades to a launch (the pre-rescue behaviour), not
+  -- a dead key.
+  local released = {}
+  for _, id in ipairs(confirmed) do released[id] = true end
+  local deadline = hs.timer.absoluteTime() + 2500 * 1e6
+  repeat
+    hs.timer.usleep(150000)
+    world, handles = survey(true, true)
+    local pending = 0
+    for _, id in ipairs(resolve.unaccounted(chrome.windows(), world.windows)) do
+      if released[id] then pending = pending + 1 end
+    end
+  until pending == 0 or hs.timer.absoluteTime() > deadline
   return resolve(request, world), world, handles
 end
 
