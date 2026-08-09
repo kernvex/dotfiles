@@ -51,6 +51,17 @@ command -v rg >/dev/null; and alias fgrep 'rg -F'
 # fd is installed as `fd`; it is not a POSIX find replacement (different flags). Use `command find` for find(1) syntax.
 command -v lazygit >/dev/null; and alias lg lazygit
 
+# `o <url>` opens a link in the Chrome profile that THIS DIRECTORY belongs to, so
+# a link opened from inside a client's folder lands in that client's browser
+# rather than in whichever window happened to be frontmost. The same routing as
+# prefix+u in tmux and gx in Neovim.
+#
+# Guarded like every alias above, and here the guard earns its place rather than
+# being merely defensive: `identity` lives in a private repo, so on any other
+# machine this abbreviation simply will not exist — which is the honest outcome,
+# since there would be no declared profiles for it to route to either.
+command -v identity >/dev/null; and abbr -a o 'identity browser open'
+
 # bash-style history recall: !! = previous command, !$ = its last argument
 function _last_history_item
   echo $history[1]
