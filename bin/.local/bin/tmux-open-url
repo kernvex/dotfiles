@@ -44,12 +44,18 @@ DEPTH=2000
 # link immediately: shell command lines with `\n` in them, JSON payloads, escaped
 # output. Found live, where a pane echoing a printf produced the candidate
 # `https://old.example/1\nsee`.
+# The `|| true` is load-bearing: grep exits 1 on no match, and under this
+# script's `set -euo pipefail` that verdict travels up the pipeline and kills
+# the caller — at the `urls=$(...)` assignment, before the "no links" message
+# ever prints, and in `--extract` before its `exit 0`. Empty output already
+# says "no links"; the exit code has no second job to do.
 extract() {
   grep -oE '(https?://|mailto:)[^[:space:]<>"'"'"'`\\]+' \
     | sed -E 's/[].,;:!?)}'"'"'"]+$//' \
     | awk 'NF' \
     | awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) print a[i] }' \
-    | awk '!seen[$0]++'
+    | awk '!seen[$0]++' \
+    || true
 }
 
 # ------------------------------------------------------------------ opening ---
