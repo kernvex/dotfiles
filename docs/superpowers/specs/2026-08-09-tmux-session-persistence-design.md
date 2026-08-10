@@ -89,6 +89,15 @@ The live tmux server is never killed or restarted. Two proof tiers:
   it, and confirm the sessions come back with names, layouts, and cwds
   intact — proving `@continuum-restore` end to end.
 
+> **Amendment (2026-08-10).** Continuum arms its autosave hook and startup
+> auto-restore only on the first tmux server on the machine (ps-based,
+> machine-wide detection), so the scratch server — always the second
+> server while the live one runs — can never observe the auto-fire. The
+> scratch tier therefore proves the save → kill → restore machinery by
+> invoking resurrect's `scripts/restore.sh` directly; continuum's
+> auto-trigger is vouched by source reading plus the armed, firing hook on
+> the live server, and first executes for real at the next reboot.
+
 ## Out of scope
 
 - `@continuum-boot` / autostart at login
