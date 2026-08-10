@@ -200,14 +200,30 @@ tmux -L persisttest kill-server
 env HOME="$SCRATCH" tmux -L persisttest -f "$SCRATCH/.tmux.conf" new-session -d -s probe -c /tmp
 ```
 
-(`-L persisttest` on the kill is the entire safety story — check it twice.) Continuum's auto-restore fires as the plugins load on the fresh server. Poll (up to ~30s):
+(`-L persisttest` on the kill is the entire safety story — check it twice.)
+
+> **Amendment (2026-08-10, human-approved).** Continuum arms its autosave
+> hook and startup auto-restore only on the FIRST tmux server on the
+> machine — `continuum.tmux` counts `tmux` processes machine-wide via
+> `ps`, not per-socket — precisely so two servers cannot overwrite each
+> other's save files. With the live server running (which this plan
+> forbids touching), the scratch server is always "the second server" and
+> auto-restore can never fire in this test, by design. Ruling: prove the
+> restore machinery by invoking resurrect's restore script directly inside
+> the fresh scratch server; continuum's auto-trigger is vouched by its
+> source-verified gate plus the armed hook on the live server, and first
+> executes for real at the next reboot.
+
+Wait for the fresh server, then run the restore from inside a scratch pane (so it inherits the scratch `$TMUX` and `$HOME`):
 
 ```bash
-until tmux -L persisttest ls 2>/dev/null | grep -q "^beta:"; do sleep 2; done
+tmux -L persisttest send-keys -t probe "~/.tmux/plugins/tmux-resurrect/scripts/restore.sh; echo RESTORED_RC=\$?" Enter
+sleep 5
+tmux -L persisttest capture-pane -p -t probe | tail -3
 tmux -L persisttest ls
 ```
 
-Expected: `alpha` and `beta` are back alongside `probe`.
+Expected: `RESTORED_RC=0`; `alpha` and `beta` are back alongside `probe`.
 
 - [ ] **Step 5: Verify restored shape**
 
