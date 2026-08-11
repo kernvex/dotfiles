@@ -29,6 +29,7 @@ if [ -e tmux-sessionizer/tmux-sessionizer ]; then
 fi
 
 ts="$(date +%s)"
+failed_pkgs=()
 
 # First unstow every package. This removes any pre-existing stow symlinks — crucially
 # any FOLDED directory symlink (e.g. ~/.config/fish -> this repo). Without this, the
@@ -55,9 +56,23 @@ for pkg in "${PACKAGES[@]}"; do
     mv "$tgt" "$tgt.bak.$ts"
     echo "backed up existing $tgt -> $tgt.bak.$ts"
   done < <(find "$pkg" -type f -print0)
-  stow --no-folding --target="$TARGET" "$pkg"
-  echo "stowed: $pkg"
+  # A conflict on ONE package (e.g. a foreign file at its target) must not strand the
+  # rest. The unstow loop above already removed every symlink, so aborting here under
+  # `set -e` used to leave all of $HOME with no dotfiles at all. Keep going and collect
+  # the failures instead.
+  if stow --no-folding --target="$TARGET" "$pkg"; then
+    echo "stowed: $pkg"
+  else
+    echo "WARN: failed to stow $pkg — continuing with the remaining packages" >&2
+    failed_pkgs+=("$pkg")
+  fi
 done
+
+if [ "${#failed_pkgs[@]}" -gt 0 ]; then
+  echo "" >&2
+  echo "WARNING: these packages did not stow: ${failed_pkgs[*]}" >&2
+  echo "Fix the conflict shown above (usually a non-symlink file at the target) and re-run ./install." >&2
+fi
 
 # Claude Code's settings.json is COPY-managed, not stowed. Claude atomically
 # rewrites it (temp + rename) on /model, /config, plugin toggles, etc., which
