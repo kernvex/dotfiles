@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Tests for the claude-tmux-* quartet.
+#
+#   ./test-claude-tmux     exit 0 = pass
+#
+# Two seams, per the spec:
+#   1. A real scratch tmux server on a private socket with a scratch $HOME —
+#      every script driven through its production entry point (hook JSON on
+#      stdin, tmux-hook invocation, keybinding invocation). Claude is mocked
+#      at the process boundary only: a shim named "2.1.999" (the digit
+#      detector matches it, same as the real version-numbered binary) that
+#      answers /rename by emitting the OSC 2 title escape.
+#   2. The pure --resolve-name seam: text in, text out, no tmux (Task 2).
+#
+# EXIT STATUS IS ASSERTED, not just output — same lesson test-tmux-open-url's
+# header records.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOCK="claude-tmux-test-$$"
+PASS=0; FAIL=0
+
+T() { command tmux -L "$SOCK" "$@"; }
+
+ok()   { PASS=$((PASS + 1)); }
+fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+
+assert_eq() { # <desc> <want> <got>
+  if [ "$2" = "$3" ]; then ok; else
+    fail "$1"; printf '        want: %s\n        got:  %s\n' "$2" "$3"
+  fi
+}
+
+assert_exit() { # <desc> <want-code> <got-code>
+  if [ "$2" -eq "$3" ]; then ok; else
+    fail "$1 (exit)"; printf '        want exit %s, got %s\n' "$2" "$3"
+  fi
+}
+
+setup() {
+  SCRATCH="$(mktemp -d /tmp/claude-tmux-test.XXXXXX)"
+  SHIM="$SCRATCH/bin"; mkdir -p "$SHIM"
+  # Mock claude. Named 2.1.999 so #{pane_current_command} starts with a digit,
+  # exactly like the real native binary.
+  cat > "$SHIM/2.1.999" <<'MOCK'
+#!/usr/bin/env bash
+while IFS= read -r line; do
+  case "$line" in
+    "/rename "*) printf '\033]2;%s\033\\' "${line#/rename }";;
+    quit) exit 0;;
+  esac
+done
+MOCK
+  chmod +x "$SHIM/2.1.999"
+  T kill-server 2>/dev/null; sleep 0.2
+  T -f /dev/null new-session -d -s main -x 120 -y 30 bash || {
+    echo "cannot start scratch server"; exit 1; }
+  SOCKPATH="$(T display -p '#{socket_path}')"
+  sleep 0.3
+}
+
+teardown() {
+  T kill-server 2>/dev/null
+  rm -rf "$SCRATCH"
+}
+
+# Run a SUT the way production runs it: scratch HOME, scratch server.
+sut() { # <script> [args...] — reads stdin
+  HOME="$SCRATCH" TMUX="$SOCKPATH,0,0" TMUX_PANE="${SUT_PANE:-}" \
+    PATH="$SHIM:$PATH" "$HERE/$@"
+}
+
+hook_json() { # <uuid> <cwd>
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"SessionStart"}' "$1" "$2"
+}
+
+# ---------------------------------------------------------------------------
+# claude-tmux-track
+# ---------------------------------------------------------------------------
+t_track_stamps_pane_and_log() {
+  local pane out code uuid="11111111-2222-3333-4444-555555555555"
+  pane="$(T display -p -t main '#{pane_id}')"
+  out="$(hook_json "$uuid" /tmp/projA | SUT_PANE="$pane" sut claude-tmux-track)"; code=$?
+  assert_exit "track exits 0" 0 "$code"
+  assert_eq "track is silent on success" "" "$out"
+  assert_eq "track stamps @claude_session" "$uuid" \
+    "$(T show -pv -t "$pane" @claude_session 2>/dev/null)"
+  assert_eq "track stamps @claude_cwd" "/tmp/projA" \
+    "$(T show -pv -t "$pane" @claude_cwd 2>/dev/null)"
+  local line
+  line="$(tail -1 "$SCRATCH/.local/state/claude-tmux/sessions.log")"
+  assert_eq "log line carries uuid" "$uuid" "$(printf '%s' "$line" | cut -f3)"
+  assert_eq "log line carries cwd" "/tmp/projA" "$(printf '%s' "$line" | cut -f4)"
+}
+
+t_track_no_tmux_is_noop() {
+  local code
+  hook_json aaaa /tmp/x | HOME="$SCRATCH" TMUX= TMUX_PANE= \
+    "$HERE/claude-tmux-track" >/dev/null; code=$?
+  assert_exit "track outside tmux exits 0" 0 "$code"
+}
+
+t_track_bad_json_is_noop() {
+  local pane code
+  pane="$(T display -p -t main '#{pane_id}')"
+  T set -pu -t "$pane" @claude_session 2>/dev/null
+  printf 'not json at all' | SUT_PANE="$pane" sut claude-tmux-track >/dev/null; code=$?
+  assert_exit "track with bad json exits 0" 0 "$code"
+  assert_eq "bad json stamps nothing" "" \
+    "$(T show -pv -t "$pane" @claude_session 2>/dev/null)"
+}
+
+main() {
+  setup
+  trap teardown EXIT
+  t_track_stamps_pane_and_log
+  t_track_no_tmux_is_noop
+  t_track_bad_json_is_noop
+  printf '%d passed, %d failed\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+}
+main
