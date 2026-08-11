@@ -44,8 +44,15 @@ DEPTH=2000
 # link immediately: shell command lines with `\n` in them, JSON payloads, escaped
 # output. Found live, where a pane echoing a printf produced the candidate
 # `https://old.example/1\nsee`.
+# A PANE WITH NO LINKS IS THE ORDINARY CASE, NOT A FAILURE. `grep` exits 1 when
+# it selects no lines, `set -o pipefail` lifts that out of the pipeline, and
+# `set -e` then kills this script — before the "no links in this pane" branch
+# below can report anything. The popup opened and shut in silence, which is what
+# pressing the key looked like: nothing at all.
+#
+# Exit 1 is absorbed; exit 2, a real grep error, still propagates.
 extract() {
-  grep -oE '(https?://|mailto:)[^[:space:]<>"'"'"'`\\]+' \
+  { grep -oE '(https?://|mailto:)[^[:space:]<>"'"'"'`\\]+' || [ "$?" -eq 1 ]; } \
     | sed -E 's/[].,;:!?)}'"'"'"]+$//' \
     | awk 'NF' \
     | awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) print a[i] }' \
@@ -88,7 +95,11 @@ if [ -z "$urls" ]; then
   echo "no links in the last $DEPTH lines of this pane"
   # Without this the popup closes the instant it opens and the message is never
   # seen, which reads as the key doing nothing at all.
-  read -r -n 1 -s -p "press any key"
+  #
+  # `|| true` because a `read` that reaches EOF — no tty, stdin closed, a test
+  # harness — returns non-zero, and under `set -e` that would kill the script on
+  # the line whose entire job is to keep it alive.
+  read -r -n 1 -s -p "press any key" || true
   exit 0
 fi
 
