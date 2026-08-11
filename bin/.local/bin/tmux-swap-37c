@@ -1,0 +1,19 @@
+#!/bin/bash
+# One-shot cutover from Homebrew tmux 3.7b (system malloc, crashes) to the
+# locally built 3.7c (jemalloc). Safe to run from INSIDE a tmux pane: the
+# ordering puts kill-server last, so when the pane dies there is nothing
+# left to do. After it runs, open a new terminal — continuum restores the
+# sessions under the new binary.
+#
+# Rollback: brew link tmux
+set -x
+# 1. Fresh resurrect save so the restore is seconds old, not minutes.
+tmux run-shell ~/.tmux/plugins/tmux-resurrect/scripts/save.sh
+sleep 2
+# 2. Unlink while the old server still runs (its loaded binary is unaffected);
+#    from here, `tmux` on PATH resolves to ~/.local/bin/tmux == 3.7c.
+brew unlink tmux
+# 3. Kill via the Cellar path: the PATH name is gone, and the 3.7c client
+#    could not talk to the 3.7b server anyway. This is the last line on
+#    purpose — it takes the calling pane with it.
+exec /opt/homebrew/Cellar/tmux/3.7b/bin/tmux kill-server
