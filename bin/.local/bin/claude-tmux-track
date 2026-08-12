@@ -86,6 +86,13 @@ except Exception:
 print(d.get("session_id", ""), d.get("cwd", ""), sep="\t")' 2>/dev/null) || true
   [ -n "${sid:-}" ] || return 0
 
+  # Sanitize cwd: replace tabs and newlines with spaces. Tabs round-trip into
+  # the manifest as 8-field rows, breaking the 7-column contract; however,
+  # tab-bearing paths only degrade the cwd-fallback, as join keys elsewhere
+  # (session, window, pane coordinates) are unaffected by the replacement.
+  cwd="${cwd//$'\t'/ }"
+  cwd="${cwd//$'\n'/ }"
+
   tmux set -p -t "$TMUX_PANE" @claude_session "$sid" 2>/dev/null || return 0
   tmux set -p -t "$TMUX_PANE" @claude_cwd "${cwd:-}" 2>/dev/null
 

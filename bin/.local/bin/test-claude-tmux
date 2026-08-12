@@ -381,6 +381,66 @@ t_manifest_joins_stamped_panes() {
     "$(ls "$SCRATCH/.local/state/claude-tmux/" | grep tmp || true)"
 }
 
+t_manifest_fails_on_tmux_error() {
+  local pane uuid="bbbbcccc-dddd-eeee-ffff-000011112222" mf original_content code
+  pane="$(T display -p -t main:0 '#{pane_id}')"
+  # Seed a known-good manifest
+  hook_json "$uuid" /tmp/seed | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sut claude-tmux-manifest >/dev/null
+  mf="$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  original_content="$(cat "$mf")"
+
+  # Point PATH at a tmux shim that exits 1
+  T kill-server 2>/dev/null; sleep 0.2
+  local tmux_shim="$SHIM/tmux"
+  cat > "$tmux_shim" <<'SHIMSCRIPT'
+#!/bin/bash
+exit 1
+SHIMSCRIPT
+  chmod +x "$tmux_shim"
+
+  # Run manifest with the broken tmux; should exit nonzero
+  PATH="$SHIM:$PATH" HOME="$SCRATCH" TMUX="$SOCKPATH,0,0" \
+    "$HERE/claude-tmux-manifest"; code=$?
+  assert_exit "manifest exits nonzero on tmux failure" 1 "$code"
+
+  # Manifest must be unchanged
+  assert_eq "manifest content unchanged after failure" "$original_content" \
+    "$(cat "$mf")"
+
+  # No temp file left behind
+  assert_eq "no temp file leaked on failure" "" \
+    "$(ls "$SCRATCH/.local/state/claude-tmux/" 2>/dev/null | grep tmp || true)"
+
+  # Restore working tmux for later tests
+  rm "$tmux_shim"
+  T -f /dev/null new-session -d -s main -x 120 -y 30 bash 2>/dev/null || true
+  sleep 0.3
+}
+
+t_manifest_sanitizes_tab_in_cwd() {
+  local pane uuid="ccccdddd-eeee-ffff-0000-111122223333" mf row field_count cwd_field code
+  pane="$(T display -p -t main:0 '#{pane_id}')"
+  # Construct hook JSON with tab in cwd; tab must be escaped as \t in JSON string,
+  # then python's json.load() will parse it as a literal tab for track to sanitize.
+  local cwd_with_escaped_tab="/tmp/proj\\tect"
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"SessionStart"}' "$uuid" "$cwd_with_escaped_tab" | \
+    SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sut claude-tmux-manifest; code=$?
+  assert_exit "manifest with tab-cwd exits 0" 0 "$code"
+
+  mf="$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  row="$(awk -F'\t' -v u="$uuid" '$5 == u' "$mf")"
+
+  # Verify exactly 7 fields (tab in cwd should be replaced with space)
+  field_count="$(printf '%s' "$row" | awk -F'\t' '{print NF}')"
+  assert_eq "manifest row has exactly 7 fields" 7 "$field_count"
+
+  # Verify the cwd field has the space-flattened path (field 6)
+  cwd_field="$(printf '%s' "$row" | cut -f6)"
+  assert_eq "cwd field carries space-flattened path" "/tmp/proj ect" "$cwd_field"
+}
+
 # ---------------------------------------------------------------------------
 # claude-tmux-name --resolve-name (pure seam: text in, text out, no tmux)
 # ---------------------------------------------------------------------------
@@ -437,6 +497,8 @@ main() {
   t_track_kicks_push_for_named_window
   t_name_deferred_guard_release_survives_renumbering
   t_manifest_joins_stamped_panes
+  t_manifest_fails_on_tmux_error
+  t_manifest_sanitizes_tab_in_cwd
   t_resolve_sanitizes
   t_resolve_walks_suffixes
   t_resolve_empty_fails
