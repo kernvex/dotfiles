@@ -70,6 +70,8 @@ MOCKSRC
 
 setup() {
   SCRATCH="$(mktemp -d /tmp/claude-tmux-test.XXXXXX)"
+  # Canonicalize SCRATCH to resolve /tmp → /private/tmp symlink on macOS
+  SCRATCH="$(cd -P "$SCRATCH" && pwd)"
   SHIM="$SCRATCH/bin"; mkdir -p "$SHIM"
   # Mock claude. Named 2.1.999 so #{pane_current_command} starts with a digit,
   # exactly like the real native binary — and compiled, not a `#!/usr/bin/env
@@ -319,6 +321,8 @@ t_track_kicks_push_for_named_window() {
   local pane uuid="99999999-8888-7777-6666-555555555555"
   pane="$(new_claude_window kicked)"
   T rename-window -t main:kicked myproj
+  # Clear sessions.log before track writes, to ensure no self-collision on delivery
+  rm -f "$SCRATCH/.local/state/claude-tmux/sessions.log"
   hook_json "$uuid" "$SCRATCH" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
   sleep 2
   assert_eq "track pushed the deliberate window name" "myproj" \
@@ -507,12 +511,12 @@ t_revive_types_manifest_uuid() {
 }
 
 t_revive_guards_live_claude() {
-  local pane code
+  local pane code typed_count
   pane="$(new_claude_window alive)"
   sut claude-tmux-revive "$pane"; code=$?
   assert_exit "revive against live claude exits 0" 0 "$code"
-  assert_eq "revive typed nothing into a live claude" "" \
-    "$(T display -p -t "$pane" '#{pane_title}')"
+  typed_count="$(T capture-pane -p -t "$pane" | grep -c 'claude --resume' || true)"
+  assert_eq "revive typed nothing into a live claude" 0 "$typed_count"
 }
 
 t_revive_falls_back_to_cwd() {
