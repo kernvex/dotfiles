@@ -5,7 +5,17 @@
 #   --resolve-name <raw>   pure seam: sanitize <raw>, read taken names (one
 #                          per line) from stdin, print the first free name.
 #                          Exit 1 if nothing sanitizes out. No tmux touched.
-#   (delivery modes are added by the naming-harness task)
+#   --from-hook <session:window>   delivery: called by the tmux
+#                          after-rename-window hook. Resolves a collision-free
+#                          name, renames the window if needed, and pushes
+#                          `/rename <name>` into the window's Claude pane.
+#   --from-track <pane_id>   delivery: called by claude-tmux-track's kick when
+#                          a window was deliberately (manually) renamed.
+#                          Resolves the pane's window and delegates to the
+#                          same path as --from-hook.
+#   Both delivery modes verify `#{pane_title}` ends with the resolved name
+#   within TIMEOUT seconds, retry once, and exit 1 (with a display-message)
+#   on failure to confirm.
 #
 # Sanitising follows tmux-session-here exactly: tmux treats `.` and `:` as
 # target-spec separators, so they become underscores; anything else outside
@@ -41,13 +51,85 @@ resolve_name() { # <raw>; taken list on stdin
   printf '%s\n' "$candidate"
 }
 
+STATE="$HOME/.local/state/claude-tmux"
+# Verification budget in seconds; the test shrinks it to keep the suite fast.
+TIMEOUT="${CLAUDE_TMUX_NAME_TIMEOUT:-10}"
+
+is_claude_cmd() { case "$1" in [0-9]*|claude) return 0;; *) return 1;; esac }
+
+claude_pane_of() { # <window-target> — lowest-index claude pane, empty if none
+  local idx cmd
+  while IFS="$(printf '\t')" read -r idx cmd; do
+    if is_claude_cmd "$cmd"; then
+      tmux display -p -t "${1}.${idx}" '#{pane_id}'
+      return 0
+    fi
+  done < <(tmux list-panes -t "$1" \
+      -F "#{pane_index}$(printf '\t')#{pane_current_command}" | sort -n)
+  return 1
+}
+
+taken_names() { # <cwd> <own-window-id> — live windows on this cwd + our records
+  # Live windows rooted at the same directory, excluding the window being
+  # named (its own current name must not count as a collision with itself).
+  local wid path name
+  while IFS="$(printf '\t')" read -r wid path name; do
+    [ "$wid" = "$2" ] && continue
+    [ "$path" = "$1" ] && printf '%s\n' "$name"
+  done < <(tmux list-panes -a \
+      -F "#{window_id}$(printf '\t')#{pane_current_path}$(printf '\t')#{window_name}" | sort -u)
+  # Names we previously pushed for this cwd (titles have no greppable store —
+  # spec fallback: our own records are the source of truth for pushed names).
+  awk -F'\t' -v c="$1" '$4 == c { print $6 }' "$STATE/sessions.log" 2>/dev/null | sort -u
+}
+
+deliver() { # <window-target>
+  local win="$1" pane raw cwd wid final title deadline try
+  # Re-entry guard: our own rename-window below re-fires after-rename-window.
+  if [ "$(tmux show -wv -t "$win" @claude_naming 2>/dev/null)" = "1" ]; then
+    return 0
+  fi
+  pane="$(claude_pane_of "$win")" || return 0   # no claude here: nothing to push
+  raw="$(tmux display -p -t "$win" '#{window_name}')"
+  cwd="$(tmux display -p -t "$pane" '#{pane_current_path}')"
+  wid="$(tmux display -p -t "$win" '#{window_id}')"
+  final="$(taken_names "$cwd" "$wid" | resolve_name "$raw")" || return 0
+  if [ "$final" != "$raw" ]; then
+    tmux set -w -t "$win" @claude_naming 1
+    tmux rename-window -t "$win" "$final"
+    # rename-window re-disables automatic-rename itself; drop the guard after
+    # the hook it triggered has had its moment to see it.
+    { sleep 1; tmux set -wu -t "$win" @claude_naming 2>/dev/null; } &
+  fi
+  for try in 1 2; do
+    tmux send-keys -t "$pane" -l "/rename $final"
+    tmux send-keys -t "$pane" Enter
+    deadline=$(( $(date +%s) + TIMEOUT ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      title="$(tmux display -p -t "$pane" '#{pane_title}')"
+      case "$title" in *"$final") return 0;; esac
+      sleep 0.5
+    done
+  done
+  tmux display-message "claude-tmux-name: /rename \"$final\" not confirmed in $win"
+  return 1
+}
+
 case "${1:-}" in
   --resolve-name)
     [ $# -ge 2 ] || { echo "usage: claude-tmux-name --resolve-name <raw>" >&2; exit 2; }
     resolve_name "$2"
     ;;
+  --from-hook)
+    [ $# -ge 2 ] || { echo "usage: claude-tmux-name --from-hook <session:window>" >&2; exit 2; }
+    deliver "$2"
+    ;;
+  --from-track)
+    [ $# -ge 2 ] || { echo "usage: claude-tmux-name --from-track <pane_id>" >&2; exit 2; }
+    deliver "$(tmux display -p -t "$2" '#{session_name}:#{window_index}')"
+    ;;
   *)
-    echo "usage: claude-tmux-name --resolve-name <raw>" >&2
+    echo "usage: claude-tmux-name --resolve-name|--from-hook|--from-track <arg>" >&2
     exit 2
     ;;
 esac

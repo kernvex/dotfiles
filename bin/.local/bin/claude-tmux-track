@@ -115,6 +115,16 @@ print(d.get("session_id", ""), d.get("cwd", ""), sep="\t")' 2>/dev/null) || true
     printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$TMUX_PANE" "$sid" "${cwd:-}" "$meta" \
       >> "$LOG" 2>/dev/null
   fi
+
+  # A deliberately named window (manual rename switched automatic-rename off)
+  # pushes its name into the brand-new session: "name first, launch whenever".
+  local auto
+  auto="$(tmux show -wv -t "$TMUX_PANE" automatic-rename 2>/dev/null)"
+  if [ "$auto" = "off" ] && [ -x "$HOME/.local/bin/claude-tmux-name" ]; then
+    "$HOME/.local/bin/claude-tmux-name" --from-track "$TMUX_PANE" \
+      >/dev/null 2>&1 &
+  fi
+
   return 0
 }
 

@@ -37,21 +37,55 @@ assert_exit() { # <desc> <want-code> <got-code>
   fi
 }
 
+build_mock() { # <output-path> answer|deaf — compile a mock claude binary
+  local out="$1" mode="$2" src answers
+  src="$(mktemp /tmp/claude-tmux-mock.XXXXXX.c)"
+  if [ "$mode" = answer ]; then
+    answers=1
+  else
+    answers=0
+  fi
+  cat > "$src" <<MOCKSRC
+#include <stdio.h>
+#include <string.h>
+int main(void) {
+  char line[4096];
+  while (fgets(line, sizeof(line), stdin)) {
+    line[strcspn(line, "\n")] = '\0';
+    if ($answers && strncmp(line, "/rename ", 8) == 0) {
+      printf("\033]2;%s\033\\\\", line + 8);
+      fflush(stdout);
+    } else if (strcmp(line, "quit") == 0) {
+      return 0;
+    }
+  }
+  return 0;
+}
+MOCKSRC
+  cc -o "$out" "$src" 2>/dev/null || {
+    echo "cannot build mock claude at $out (cc unavailable?)" >&2; exit 1; }
+  rm -f "$src"
+  chmod +x "$out"
+}
+
 setup() {
   SCRATCH="$(mktemp -d /tmp/claude-tmux-test.XXXXXX)"
   SHIM="$SCRATCH/bin"; mkdir -p "$SHIM"
   # Mock claude. Named 2.1.999 so #{pane_current_command} starts with a digit,
-  # exactly like the real native binary.
-  cat > "$SHIM/2.1.999" <<'MOCK'
-#!/usr/bin/env bash
-while IFS= read -r line; do
-  case "$line" in
-    "/rename "*) printf '\033]2;%s\033\\' "${line#/rename }";;
-    quit) exit 0;;
-  esac
-done
-MOCK
-  chmod +x "$SHIM/2.1.999"
+  # exactly like the real native binary — and compiled, not a `#!/usr/bin/env
+  # bash` script: on macOS, tmux (and the kernel's own process-name
+  # accounting) reports an interpreted script's identity as its interpreter
+  # ("bash"), not the script's own filename, no matter what the file or a
+  # copy/symlink of it is named. Only a genuinely distinct binary — like the
+  # real, compiled, version-numbered claude executable this mocks — gets its
+  # own name back from #{pane_current_command}.
+  build_mock "$SHIM/2.1.999" answer
+  # Mirror production's ~/.local/bin layout (stow-managed) inside the scratch
+  # HOME: claude-tmux-track's kick shells out to "$HOME/.local/bin/claude-
+  # tmux-name" by absolute path, not via PATH, so that self-reference needs
+  # to resolve under the scratch HOME too.
+  mkdir -p "$SCRATCH/.local/bin"
+  ln -sf "$HERE/claude-tmux-name" "$SCRATCH/.local/bin/claude-tmux-name"
   T kill-server 2>/dev/null; sleep 0.2
   T -f /dev/null new-session -d -s main -x 120 -y 30 bash || {
     echo "cannot start scratch server"; exit 1; }
@@ -216,6 +250,82 @@ t_track_fail_open_on_held_lock() {
 }
 
 # ---------------------------------------------------------------------------
+# claude-tmux-name delivery (mock claude answers /rename with an OSC title)
+# ---------------------------------------------------------------------------
+new_claude_window() { # <win-name> — window running the mock, returns pane id
+  T new-window -t main -n "$1" -c "$SCRATCH" "PATH=$SHIM:$PATH 2.1.999"
+  sleep 0.4
+  T display -p -t "main:$1" '#{pane_id}'
+}
+
+t_name_pushes_window_name_as_title() {
+  local pane code
+  pane="$(new_claude_window pushme)"
+  T rename-window -t main:pushme workname   # manual rename: automatic-rename off
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:workname"; code=$?
+  assert_exit "delivery exits 0" 0 "$code"
+  # allow the title escape a moment to round-trip
+  sleep 1
+  assert_eq "session title became the window name" "workname" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+t_name_suffixes_and_renames_on_collision() {
+  local pane code idx
+  # another live window with the target name, rooted at the same cwd
+  T new-window -t main -n depwork -c "$SCRATCH" bash
+  pane="$(new_claude_window second)"
+  T rename-window -t "main:second" depwork
+  # Once both windows are named "depwork" the name is ambiguous, and unlike
+  # "tmux display" (which quietly picks a match), "tmux list-panes -t" — what
+  # claude_pane_of() uses — refuses an ambiguous name outright ("can't find
+  # window"). Address by window_index instead, exactly as the delivery
+  # contract documents (--from-hook takes "<session>:<window_index>");
+  # window_index is read via the pane id, which is never ambiguous.
+  idx="$(T display -p -t "$pane" '#{window_index}')"
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:$idx"; code=$?
+  assert_exit "collision delivery exits 0" 0 "$code"
+  sleep 1
+  assert_eq "window renamed to the suffixed result" "depwork-2" \
+    "$(T display -p -t "$pane" '#{window_name}')"
+  assert_eq "title matches the suffixed name" "depwork-2" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+t_name_no_claude_pane_is_noop() {
+  local code
+  T new-window -t main -n plain -c "$SCRATCH" bash
+  sut claude-tmux-name --from-hook "main:plain"; code=$?
+  assert_exit "window without claude exits 0 (nothing to push)" 0 "$code"
+}
+
+t_name_unconfirmed_rename_fails() {
+  local pane code
+  # a deaf mock: reads /rename lines but never answers with a title escape —
+  # built fresh via build_mock (not sed-patched from the live mock) so the
+  # fixture can't drift out of sync with a printf format string edited
+  # elsewhere, and so it gets its own real process identity (see setup()).
+  build_mock "$SHIM/2.1.998" deaf
+  T new-window -t main -n deaf -c "$SCRATCH" "PATH=$SHIM:$PATH 2.1.998"
+  sleep 0.4
+  pane="$(T display -p -t main:deaf '#{pane_id}')"
+  T rename-window -t main:deaf silent
+  CLAUDE_TMUX_NAME_TIMEOUT=2 SUT_PANE="$pane" \
+    sut claude-tmux-name --from-hook "main:silent"; code=$?
+  assert_exit "unconfirmed rename exits 1" 1 "$code"
+}
+
+t_track_kicks_push_for_named_window() {
+  local pane uuid="99999999-8888-7777-6666-555555555555"
+  pane="$(new_claude_window kicked)"
+  T rename-window -t main:kicked myproj
+  hook_json "$uuid" "$SCRATCH" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sleep 2
+  assert_eq "track pushed the deliberate window name" "myproj" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+# ---------------------------------------------------------------------------
 # claude-tmux-name --resolve-name (pure seam: text in, text out, no tmux)
 # ---------------------------------------------------------------------------
 resolve() { # <raw> <taken newline-list>
@@ -264,6 +374,11 @@ main() {
   t_track_bad_json_is_noop
   t_track_concurrent_trim_no_data_loss
   t_track_fail_open_on_held_lock
+  t_name_pushes_window_name_as_title
+  t_name_suffixes_and_renames_on_collision
+  t_name_no_claude_pane_is_noop
+  t_name_unconfirmed_rename_fails
+  t_track_kicks_push_for_named_window
   t_resolve_sanitizes
   t_resolve_walks_suffixes
   t_resolve_empty_fails
