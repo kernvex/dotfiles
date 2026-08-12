@@ -325,6 +325,39 @@ t_track_kicks_push_for_named_window() {
     "$(T display -p -t "$pane" '#{pane_title}')"
 }
 
+t_name_deferred_guard_release_survives_renumbering() {
+  local pane wid idx code sut_pid
+  # This repo's real tmux.conf ships `renumber-windows on`; the scratch
+  # server doesn't load that config, so turn it on to reproduce the risk.
+  T set -g renumber-windows on
+  # A filler window at a lower index than the claude window: closing it
+  # while the deferred guard-release (a 1s-out backgrounded unset) is still
+  # pending shifts every higher-indexed window's index down by one.
+  T new-window -t main -n filler -c "$SCRATCH" bash
+  T new-window -t main -n depwork3 -c "$SCRATCH" bash   # forces a collision
+  pane="$(new_claude_window renum)"
+  wid="$(T display -p -t "$pane" '#{window_id}')"
+  T rename-window -t "main:renum" depwork3
+  idx="$(T display -p -t "$pane" '#{window_index}')"
+  # Run delivery in the background: it blocks until the mock confirms the
+  # title, which can itself take close to the deferred release's own 1s
+  # budget — running it inline would race our own kill below.
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:$idx" >/dev/null &
+  sut_pid=$!
+  # Give deliver() a moment to set the guard and schedule the deferred
+  # unset — well short of the 1s it waits before firing.
+  sleep 0.3
+  T kill-window -t main:filler
+  wait "$sut_pid"; code=$?
+  assert_exit "renumber-safe delivery exits 0" 0 "$code"
+  # Let the deferred unset's 1s budget (from when it was scheduled, ~0.3s
+  # before the kill above) fully elapse.
+  sleep 1.3
+  assert_eq "guard cleared on the real window despite renumbering" "" \
+    "$(T show -wv -t "$wid" @claude_naming 2>/dev/null)"
+  T set -g renumber-windows off
+}
+
 # ---------------------------------------------------------------------------
 # claude-tmux-name --resolve-name (pure seam: text in, text out, no tmux)
 # ---------------------------------------------------------------------------
@@ -379,6 +412,7 @@ main() {
   t_name_no_claude_pane_is_noop
   t_name_unconfirmed_rename_fails
   t_track_kicks_push_for_named_window
+  t_name_deferred_guard_release_survives_renumbering
   t_resolve_sanitizes
   t_resolve_walks_suffixes
   t_resolve_empty_fails

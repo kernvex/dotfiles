@@ -95,11 +95,17 @@ deliver() { # <window-target>
   wid="$(tmux display -p -t "$win" '#{window_id}')"
   final="$(taken_names "$cwd" "$wid" | resolve_name "$raw")" || return 0
   if [ "$final" != "$raw" ]; then
-    tmux set -w -t "$win" @claude_naming 1
-    tmux rename-window -t "$win" "$final"
+    tmux set -w -t "$wid" @claude_naming 1
+    tmux rename-window -t "$wid" "$final"
     # rename-window re-disables automatic-rename itself; drop the guard after
-    # the hook it triggered has had its moment to see it.
-    { sleep 1; tmux set -wu -t "$win" @claude_naming 2>/dev/null; } &
+    # the hook it triggered has had its moment to see it. Target by the
+    # stable window id, not "$win" (a session:window_index string): with
+    # renumber-windows on, a lower-indexed window closing during this 1s gap
+    # shifts every higher index down, so the index captured in "$win" can
+    # point at the wrong window — or none — by the time this fires, leaving
+    # @claude_naming stuck at 1 on the real window forever (nothing else
+    # ever clears it, silently disabling future name pushes for it).
+    { sleep 1; tmux set -wu -t "$wid" @claude_naming 2>/dev/null; } &
   fi
   for try in 1 2; do
     tmux send-keys -t "$pane" -l "/rename $final"
