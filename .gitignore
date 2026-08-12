@@ -20,3 +20,6 @@ hammerspoon/.hammerspoon/slot-table.lua
 # Specs are NOT here — they live committed in docs/superpowers/specs/, because
 # publishing one under this path would silently untrack it.
 .scratch/
+
+# Claude-managed worktrees live inside the repo but are never content
+.claude/worktrees/
