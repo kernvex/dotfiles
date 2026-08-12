@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Tests for the copy/visual/search mode pills — the status-left conditionals.
+#
+#   ./test-tmux-mode-indicator     exit 0 = pass
+#
+# A scratch tmux server on its own socket sources this checkout's tmux.conf
+# and is driven through the copy-mode states with `send-keys -X`; every
+# assertion is on the RENDERED bar (`#{T:status-left}`), not the option
+# string — the option is one long conditional and always "present", only the
+# render says which pills a state actually shows. T: expands the `#{@thm_*}`
+# references inside the style blocks too, so each label is asserted together
+# with its resolved theme colour. Plugins are already on disk, so no network;
+# this is always a second server, so continuum never arms here (see the
+# persistence spec amendment).
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONF="$HERE/../../../tmux/.tmux.conf"
+[ -f "$CONF" ] || { echo "cannot find tmux.conf at $CONF"; exit 1; }
+
+SOCK="mode-indicator-test"
+T() { tmux -L "$SOCK" "$@"; }
+trap 'T kill-server 2>/dev/null' EXIT
+
+T -f "$CONF" new-session -d -s modes -x 80 -y 24 \
+  'printf "needle one\nneedle two\n"; exec sleep 600' \
+  || { echo "could not start scratch server"; exit 1; }
+
+# Wired at all? A missing conf edit would otherwise fail every case with an
+# unhelpfully empty render.
+case "$(T show -gv status-left)" in
+  *VISUAL*COPY*SEARCH*) ;;
+  *) echo "status-left carries no pill segments — is the conf edit in place?"
+     exit 1 ;;
+esac
+
+# The theme lands via TPM's run-shell, which can finish after new-session
+# returns; the hex assertions below need @thm_* populated.
+for _ in $(seq 50); do
+  [ -n "$(T show -gv @thm_sky 2>/dev/null)" ] && break
+  sleep 0.2
+done
+SKY="$(T show -gv @thm_sky)"
+MAUVE="$(T show -gv @thm_mauve)"
+GREEN="$(T show -gv @thm_green)"
+[ -n "$SKY" ] && [ -n "$MAUVE" ] && [ -n "$GREEN" ] \
+  || { echo "theme never loaded — @thm_* empty"; exit 1; }
+
+PANE="modes:1.0"   # base-index 1
+left() { T display -p -t "$PANE" '#{T:status-left}'; }
+x() { T send-keys -t "$PANE" -X "$@"; }
+
+PASS=0
+FAIL=0
+
+expect() { # <description> <got>, then pairs: has|not <needle>
+  local what="$1" got="$2" ok=1; shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      has) case "$got" in *"$2"*) ;; *) ok=0 ;; esac ;;
+      not) case "$got" in *"$2"*) ok=0 ;; esac ;;
+    esac
+    shift 2
+  done
+  if [ "$ok" -eq 1 ]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        got: %s\n' "$what" "$got"
+  fi
+}
+
+expect "live pane shows no pill" "$(left)" \
+  not COPY not VISUAL not SEARCH
+
+T copy-mode -t "$PANE"
+expect "copy-mode shows COPY on sky" "$(left)" \
+  has COPY has "$SKY" not VISUAL not "$MAUVE" not SEARCH
+
+x begin-selection
+expect "VISUAL replaces COPY the instant a selection starts" "$(left)" \
+  has VISUAL has "$MAUVE" not COPY not "$SKY" not SEARCH
+
+x clear-selection
+x search-backward "needle"
+expect "search adds SEARCH beside COPY" "$(left)" \
+  has COPY has SEARCH has "$GREEN" has "$SKY" not VISUAL
+
+x begin-selection
+x search-again
+expect "searching during a selection: VISUAL + SEARCH" "$(left)" \
+  has VISUAL has SEARCH not COPY
+
+x cancel
+expect "cancel clears every pill" "$(left)" \
+  not COPY not VISUAL not SEARCH
+
+printf '%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]
