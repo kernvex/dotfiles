@@ -15,17 +15,20 @@ SUT="$HERE/tmux-open-url"
 PASS=0
 FAIL=0
 
+# EXIT STATUS IS ASSERTED, not just output, and that omission is what let a real
+# bug ship: extraction from a pane with no links printed nothing AND exited 1,
+# the caller runs under `set -e`, so the script died before it could say "no
+# links here" — the popup opened and shut in silence. Output-only assertions
+# called that a pass.
 expect() { # <description> <input> <expected output, newline separated>
-  local what="$1" input="$2" want="$3" got rc
-  got="$(printf '%s' "$input" | "$SUT" --extract 2>&1)"; rc=$?
-  # The exit status is part of the contract, not a formality: the real script
-  # runs under `set -e`, so a nonzero exit from a linkless pane kills it before
-  # the "no links" message — a failure no stdout comparison can see.
-  if [ "$got" = "$want" ] && [ "$rc" -eq 0 ]; then
+  local what="$1" input="$2" want="$3" got code
+  got="$(printf '%s' "$input" | "$SUT" --extract 2>&1)"; code=$?
+  if [ "$got" = "$want" ] && [ "$code" -eq 0 ]; then
     PASS=$((PASS + 1))
   else
     FAIL=$((FAIL + 1))
-    printf '  FAIL  %s (exit %d)\n        want: %s\n        got:  %s\n' "$what" "$rc" "${want//$'\n'/ | }" "${got//$'\n'/ | }"
+    printf '  FAIL  %s\n        want: %s (exit 0)\n        got:  %s (exit %s)\n' \
+      "$what" "${want//$'\n'/ | }" "${got//$'\n'/ | }" "$code"
   fi
 }
 

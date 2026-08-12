@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# claude-tmux-track — SessionStart hook target: stamp the session's identity
+# onto the tmux pane it runs in, and append it to the on-disk map.
+#
+# Registered in ~/.claude/settings.json (copy-managed; see claude/README.md).
+# Claude pipes the hook input JSON to stdin; session_id and cwd are the two
+# fields used. Resume reuses the original session id, so re-stamping on every
+# start/resume is what keeps the map self-healing.
+#
+# Contract (spec): print NOTHING to stdout on success — SessionStart stdout is
+# injected into the session's context. ALWAYS exit 0 — a broken hook must
+# never block a claude launch. No-op outside tmux. Errors land in hook.err.
+set -u
+
+STATE="$HOME/.local/state/claude-tmux"
+LOG="$STATE/sessions.log"
+LOCK="$STATE/.lock"
+mkdir -p "$STATE" 2>/dev/null || exit 0
+
+# Lock budget: append+trim is serialized under an mkdir lock (atomic on every
+# POSIX fs, including macOS). Acquisition is bounded — 40 tries * 50ms sleep =
+# a hard cap of ~2s — never unbounded, so a wedged lock can't hang a hook and
+# block a claude launch. The critical section itself is milliseconds (append
+# a line; occasionally tail+mv a ~2000-line file), so ordinary contention,
+# even many concurrent panes starting at once, serializes well inside the 2s
+# cap: every contender is expected to acquire the lock and append+trim
+# atomically. Hitting the cap and falling to fail-open is the exceptional
+# path — it means the lock is genuinely stuck (holder crashed mid-critical-
+# section, filesystem wedged), not routine contention.
+#
+# Fail-open (see main(), below) is a deliberate trade: never block the hook,
+# even if the lock can't be had. But its append is NOT race-free — it runs
+# outside the lock, so a concurrent lock-holder's trim (tail > tmp && mv) can
+# swap the log out from under it and silently drop the line. Fail-open trades
+# "never lose an append" for "never hang a hook launch" — that loss window
+# only opens when the lock is stuck, which the 2s budget is sized to make rare.
+acquire_lock() {
+  local retries=0
+  # Hard-capped wait: 40 tries * ~50ms sleep = ~2s max, never unbounded.
+  while [ $retries -lt 40 ]; do
+    if mkdir "$LOCK" 2>/dev/null; then
+      return 0  # Success
+    fi
+    # Check if lock is stale (>30s old); if so, remove and retry immediately.
+    # Only ever steal on a CONFIRMED old mtime. A stat failure here is not
+    # evidence of staleness — under N-way contention "mkdir" can fail because
+    # a legitimate holder took it a moment ago, and "stat" can then race with
+    # that holder's own release (or transiently fail to spawn under heavy
+    # concurrent forking). Treating "stat failed" as "mtime 0 => billions of
+    # seconds old" force-steals a lock that may be microseconds old and
+    # actively held, which breaks mutual exclusion between two real holders
+    # (observed: two processes both won a "trim" of the same log). So: no
+    # reading, no verdict — fall through to the normal sleep-and-retry.
+    if [ -d "$LOCK" ]; then
+      local lock_mtime
+      if lock_mtime="$(stat -f%m "$LOCK" 2>/dev/null)" && [ -n "$lock_mtime" ]; then
+        if [ "$(( $(date +%s) - lock_mtime ))" -gt 30 ]; then
+          rmdir "$LOCK" 2>/dev/null
+          continue
+        fi
+      fi
+    fi
+    sleep 0.05
+    retries=$((retries + 1))
+  done
+  return 1  # Failed to acquire: lock is stuck, not just contended. Fail open.
+}
+
+release_lock() {
+  rmdir "$LOCK" 2>/dev/null || true
+}
+
+main() {
+  [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || return 0
+  command -v tmux >/dev/null 2>&1 || return 0
+
+  local json sid cwd
+  json="$(cat 2>/dev/null)" || return 0
+  # python3, not jq: jq is not a dependency anywhere else in this repo.
+  IFS="$(printf '\t')" read -r sid cwd < <(printf '%s' "$json" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+print(d.get("session_id", ""), d.get("cwd", ""), sep="\t")' 2>/dev/null) || true
+  [ -n "${sid:-}" ] || return 0
+
+  # Sanitize cwd: replace tabs and newlines with spaces. Tabs round-trip into
+  # the manifest as 8-field rows, breaking the 7-column contract; however,
+  # tab-bearing paths only degrade the cwd-fallback, as join keys elsewhere
+  # (session, window, pane coordinates) are unaffected by the replacement.
+  cwd="${cwd//$'\t'/ }"
+  cwd="${cwd//$'\n'/ }"
+
+  tmux set -p -t "$TMUX_PANE" @claude_session "$sid" 2>/dev/null || return 0
+  tmux set -p -t "$TMUX_PANE" @claude_cwd "${cwd:-}" 2>/dev/null
+
+  local meta
+  meta="$(tmux display -p -t "$TMUX_PANE" \
+    "#{session_name}:#{window_index}.#{pane_index}$(printf '\t')#{window_name}" \
+    2>/dev/null)" || return 0
+
+  # Append with atomic trimming: acquire lock, append, trim if needed, release lock.
+  # On lock contention, fail open: append anyway without trimming.
+  if acquire_lock; then
+    trap "release_lock" RETURN
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$TMUX_PANE" "$sid" "${cwd:-}" "$meta" \
+      >> "$LOG" 2>/dev/null
+
+    # Opportunistic trim: let the log double its budget, then keep the tail.
+    local n
+    n="$(wc -l < "$LOG" 2>/dev/null || echo 0)"
+    if [ "${n:-0}" -gt 2000 ]; then
+      tail -1000 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+    fi
+  else
+    # Fail open: the lock is stuck (2s budget exhausted), not just busy.
+    # Append anyway so the hook never blocks a launch — but this append is
+    # unprotected: a concurrent lock-holder's trim can still lose it. See the
+    # comment above acquire_lock for what this path does and doesn't guarantee.
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$TMUX_PANE" "$sid" "${cwd:-}" "$meta" \
+      >> "$LOG" 2>/dev/null
+  fi
+
+  # A deliberately named window (manual rename switched automatic-rename off)
+  # pushes its name into the brand-new session: "name first, launch whenever".
+  local auto
+  auto="$(tmux show -wv -t "$TMUX_PANE" automatic-rename 2>/dev/null)"
+  if [ "$auto" = "off" ] && [ -x "$HOME/.local/bin/claude-tmux-name" ]; then
+    "$HOME/.local/bin/claude-tmux-name" --from-track "$TMUX_PANE" \
+      >/dev/null 2>&1 &
+  fi
+
+  return 0
+}
+
+main >/dev/null 2>>"$STATE/hook.err" || true
+exit 0

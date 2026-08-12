@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# claude-tmux-manifest — join every @claude_session pane option to its window
+# coordinates and rewrite manifest.tsv atomically.
+#
+# Runs from resurrect's post-save hook (@resurrect-hook-post-save-all), i.e.
+# at every continuum autosave — which is the correctness argument: written at
+# the same instant as the resurrect save, the manifest always describes
+# exactly the layout resurrect will rebuild. Columns:
+#   session_name  window_index  pane_index  window_name  uuid  cwd  pane_title
+set -u
+
+STATE="$HOME/.local/state/claude-tmux"
+OUT="$STATE/manifest.tsv"
+mkdir -p "$STATE"
+
+TAB="$(printf '\t')"
+tmp="$OUT.tmp.$$"
+tmp_listing="$OUT.listing.$$"
+trap 'rm -f "$tmp" "$tmp_listing"' EXIT
+
+# Capture exit status of tmux list-panes: it's the only command that can fail
+# (transient errors, shutdown); awk filtering is infallible. If the listing
+# fails, exit nonzero and leave the last-known-good manifest unchanged.
+tmux list-panes -a -F \
+  "#{session_name}${TAB}#{window_index}${TAB}#{pane_index}${TAB}#{window_name}${TAB}#{@claude_session}${TAB}#{@claude_cwd}${TAB}#{pane_title}" \
+  > "$tmp_listing" || exit 1
+
+awk -F'\t' '$5 != ""' < "$tmp_listing" > "$tmp"
+mv "$tmp" "$OUT"

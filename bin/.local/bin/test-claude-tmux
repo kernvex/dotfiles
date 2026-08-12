@@ -1,0 +1,684 @@
+#!/usr/bin/env bash
+# Tests for the claude-tmux-* quartet.
+#
+#   ./test-claude-tmux     exit 0 = pass
+#
+# Two seams, per the spec:
+#   1. A real scratch tmux server on a private socket with a scratch $HOME —
+#      every script driven through its production entry point (hook JSON on
+#      stdin, tmux-hook invocation, keybinding invocation). Claude is mocked
+#      at the process boundary only: a shim named "2.1.999" (the digit
+#      detector matches it, same as the real version-numbered binary) that
+#      answers /rename by emitting the OSC 2 title escape.
+#   2. The pure --resolve-name seam: text in, text out, no tmux (Task 2).
+#
+# EXIT STATUS IS ASSERTED, not just output — same lesson test-tmux-open-url's
+# header records.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOCK="claude-tmux-test-$$"
+PASS=0; FAIL=0
+
+T() { command tmux -L "$SOCK" "$@"; }
+
+ok()   { PASS=$((PASS + 1)); }
+fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+
+assert_eq() { # <desc> <want> <got>
+  if [ "$2" = "$3" ]; then ok; else
+    fail "$1"; printf '        want: %s\n        got:  %s\n' "$2" "$3"
+  fi
+}
+
+assert_exit() { # <desc> <want-code> <got-code>
+  if [ "$2" -eq "$3" ]; then ok; else
+    fail "$1 (exit)"; printf '        want exit %s, got %s\n' "$2" "$3"
+  fi
+}
+
+build_mock() { # <output-path> answer|deaf — compile a mock claude binary
+  local out="$1" mode="$2" src answers
+  src="$(mktemp /tmp/claude-tmux-mock.XXXXXX.c)"
+  if [ "$mode" = answer ]; then
+    answers=1
+  else
+    answers=0
+  fi
+  cat > "$src" <<MOCKSRC
+#include <stdio.h>
+#include <string.h>
+int main(void) {
+  char line[4096];
+  while (fgets(line, sizeof(line), stdin)) {
+    line[strcspn(line, "\n")] = '\0';
+    if ($answers && strncmp(line, "/rename ", 8) == 0) {
+      printf("\033]2;%s\033\\\\", line + 8);
+      fflush(stdout);
+    } else if (strcmp(line, "quit") == 0) {
+      return 0;
+    }
+  }
+  return 0;
+}
+MOCKSRC
+  cc -o "$out" "$src" 2>/dev/null || {
+    echo "cannot build mock claude at $out (cc unavailable?)" >&2; exit 1; }
+  rm -f "$src"
+  chmod +x "$out"
+}
+
+setup() {
+  SCRATCH="$(mktemp -d /tmp/claude-tmux-test.XXXXXX)"
+  # Canonicalize SCRATCH to resolve /tmp → /private/tmp symlink on macOS
+  SCRATCH="$(cd -P "$SCRATCH" && pwd)"
+  SHIM="$SCRATCH/bin"; mkdir -p "$SHIM"
+  # Mock claude. Named 2.1.999 so #{pane_current_command} starts with a digit,
+  # exactly like the real native binary — and compiled, not a `#!/usr/bin/env
+  # bash` script: on macOS, tmux (and the kernel's own process-name
+  # accounting) reports an interpreted script's identity as its interpreter
+  # ("bash"), not the script's own filename, no matter what the file or a
+  # copy/symlink of it is named. Only a genuinely distinct binary — like the
+  # real, compiled, version-numbered claude executable this mocks — gets its
+  # own name back from #{pane_current_command}.
+  build_mock "$SHIM/2.1.999" answer
+  # Mirror production's ~/.local/bin layout (stow-managed) inside the scratch
+  # HOME: claude-tmux-track's kick shells out to "$HOME/.local/bin/claude-
+  # tmux-name" by absolute path, not via PATH, so that self-reference needs
+  # to resolve under the scratch HOME too.
+  mkdir -p "$SCRATCH/.local/bin"
+  ln -sf "$HERE/claude-tmux-name" "$SCRATCH/.local/bin/claude-tmux-name"
+  T kill-server 2>/dev/null; sleep 0.2
+  T -f /dev/null new-session -d -s main -x 120 -y 30 bash || {
+    echo "cannot start scratch server"; exit 1; }
+  SOCKPATH="$(T display -p '#{socket_path}')"
+  sleep 0.3
+}
+
+teardown() {
+  T kill-server 2>/dev/null
+  rm -rf "$SCRATCH"
+}
+
+# Run a SUT the way production runs it: scratch HOME, scratch server.
+sut() { # <script> [args...] — reads stdin
+  HOME="$SCRATCH" TMUX="$SOCKPATH,0,0" TMUX_PANE="${SUT_PANE:-}" \
+    PATH="$SHIM:$PATH" "$HERE/$@"
+}
+
+hook_json() { # <uuid> <cwd>
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"SessionStart"}' "$1" "$2"
+}
+
+# ---------------------------------------------------------------------------
+# claude-tmux-track
+# ---------------------------------------------------------------------------
+t_track_stamps_pane_and_log() {
+  local pane out code uuid="11111111-2222-3333-4444-555555555555"
+  pane="$(T display -p -t main '#{pane_id}')"
+  out="$(hook_json "$uuid" /tmp/projA | SUT_PANE="$pane" sut claude-tmux-track)"; code=$?
+  assert_exit "track exits 0" 0 "$code"
+  assert_eq "track is silent on success" "" "$out"
+  assert_eq "track stamps @claude_session" "$uuid" \
+    "$(T show -pv -t "$pane" @claude_session 2>/dev/null)"
+  assert_eq "track stamps @claude_cwd" "/tmp/projA" \
+    "$(T show -pv -t "$pane" @claude_cwd 2>/dev/null)"
+  local line
+  line="$(tail -1 "$SCRATCH/.local/state/claude-tmux/sessions.log")"
+  assert_eq "log line carries uuid" "$uuid" "$(printf '%s' "$line" | cut -f3)"
+  assert_eq "log line carries cwd" "/tmp/projA" "$(printf '%s' "$line" | cut -f4)"
+}
+
+t_track_no_tmux_is_noop() {
+  local code
+  hook_json aaaa /tmp/x | HOME="$SCRATCH" TMUX= TMUX_PANE= \
+    "$HERE/claude-tmux-track" >/dev/null; code=$?
+  assert_exit "track outside tmux exits 0" 0 "$code"
+}
+
+t_track_bad_json_is_noop() {
+  local pane code
+  pane="$(T display -p -t main '#{pane_id}')"
+  T set -pu -t "$pane" @claude_session 2>/dev/null
+  printf 'not json at all' | SUT_PANE="$pane" sut claude-tmux-track >/dev/null; code=$?
+  assert_exit "track with bad json exits 0" 0 "$code"
+  assert_eq "bad json stamps nothing" "" \
+    "$(T show -pv -t "$pane" @claude_session 2>/dev/null)"
+}
+
+t_track_concurrent_trim_no_data_loss() {
+  local log_file pane i uuid line_count present_count
+  log_file="$SCRATCH/.local/state/claude-tmux/sessions.log"
+  mkdir -p "$(dirname "$log_file")"
+
+  # Seed the log with 1980 lines (so 1980 + ~25 concurrent = 2005+, triggers trim).
+  for i in $(seq 1 1980); do
+    printf '%d\tpane-id\told-uuid-%04d\t/tmp/old\tmain:0.0\twindow\n' "$((1000000 + i))" "$i" >> "$log_file"
+  done
+
+  # Launch ~25 concurrent track invocations, each with unique UUID.
+  # This will cross the trim threshold mid-race. All new lines must survive.
+  local pids=()
+  for i in $(seq 1 25); do
+    pane="$(T display -p -t main '#{pane_id}')"
+    uuid="concurrent-uuid-$(printf '%04d' "$i")"
+    hook_json "$uuid" /tmp/concurrent | SUT_PANE="$pane" sut claude-tmux-track >/dev/null &
+    pids+=($!)
+  done
+
+  # Wait for all background jobs.
+  for pid in "${pids[@]}"; do
+    wait "$pid"
+  done
+
+  # Assert all 25 new UUIDs are present (zero data loss).
+  present_count=0
+  for i in $(seq 1 25); do
+    uuid="concurrent-uuid-$(printf '%04d' "$i")"
+    if grep -q "$uuid" "$log_file"; then
+      present_count=$((present_count + 1))
+    fi
+  done
+  assert_eq "concurrent trim: all 25 UUIDs present (no data loss)" 25 "$present_count"
+
+  # Assert log length is reasonable: ~1000 kept + 25 new = ~1025.
+  line_count="$(wc -l < "$log_file" 2>/dev/null || echo 0)"
+  if [ "$line_count" -le 1100 ] && [ "$line_count" -ge 1000 ]; then
+    ok
+  else
+    fail "concurrent trim: log length sane"; printf '        want 1000-1100 lines, got %d\n' "$line_count"
+  fi
+}
+
+t_track_fail_open_on_held_lock() {
+  local pane uuid lock_dir log_file code start_time end_time elapsed line_count
+  pane="$(T display -p -t main '#{pane_id}')"
+  uuid="dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb"
+  lock_dir="$SCRATCH/.local/state/claude-tmux/.lock"
+  log_file="$SCRATCH/.local/state/claude-tmux/sessions.log"
+  mkdir -p "$(dirname "$log_file")"
+
+  # Clear and re-seed the log above the 2000-line trim threshold (2100 lines).
+  # This ensures we can verify that NO TRIM occurred on the fail-open path.
+  : > "$log_file"  # Truncate log file
+  local i
+  for i in $(seq 1 2100); do
+    printf '%d\tpane-id\told-uuid-%04d\t/tmp/old\tmain:0.0\twindow\n' "$((1000000 + i))" "$i" >> "$log_file"
+  done
+
+  mkdir -p "$(dirname "$lock_dir")"
+
+  # Start a background process that holds the lock directory for a few seconds.
+  # This is a FRESH lock (mtime = now), so stale-breaker cannot clear it.
+  (mkdir "$lock_dir" 2>/dev/null && sleep 3) &
+  local holder_pid=$!
+  sleep 0.1  # Ensure lock is held before we try to acquire
+
+  # Time the track invocation to ensure bounded acquisition.
+  start_time="$(date +%s%N)"
+  hook_json "$uuid" /tmp/fail-open | SUT_PANE="$pane" sut claude-tmux-track >/dev/null; code=$?
+  end_time="$(date +%s%N)"
+  elapsed=$(( (end_time - start_time) / 1000000 ))  # Convert ns to ms
+
+  assert_exit "fail-open exits 0" 0 "$code"
+
+  # Assert bounded acquisition: budget is 40 retries * ~50ms = ~2s hard cap.
+  # Allow a margin (budget + 1s) for scheduling/tmux-call overhead so the
+  # assertion pins the cap without being flaky on a loaded machine.
+  if [ "$elapsed" -lt 3000 ]; then
+    ok
+  else
+    fail "fail-open: bounded acquisition"; printf '        invocation took %d ms, want <3000ms\n' "$elapsed"
+  fi
+
+  # Check that the line was still appended despite lock contention (fail open).
+  if [ -f "$log_file" ]; then
+    local last_line
+    last_line="$(tail -1 "$log_file" 2>/dev/null)"
+    local uuid_in_log="$(printf '%s' "$last_line" | cut -f3 2>/dev/null)"
+    assert_eq "fail-open: line appended despite held lock" "$uuid" "$uuid_in_log"
+
+    # Critical: assert NO TRIM occurred on the fail-open path.
+    # Log should be exactly 2101 lines (2100 seed + 1 append), not trimmed to ~1000.
+    line_count="$(wc -l < "$log_file" 2>/dev/null | tr -d ' ' || echo 0)"
+    assert_eq "fail-open: no trim on fail-open path" 2101 "$line_count"
+  else
+    fail "fail-open: log file not created"
+  fi
+
+  # Clean up the lock holder.
+  kill $holder_pid 2>/dev/null
+  wait $holder_pid 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# claude-tmux-name delivery (mock claude answers /rename with an OSC title)
+# ---------------------------------------------------------------------------
+new_claude_window() { # <win-name> — window running the mock, returns pane id
+  T new-window -t main -n "$1" -c "$SCRATCH" "PATH=$SHIM:$PATH 2.1.999"
+  sleep 0.4
+  T display -p -t "main:$1" '#{pane_id}'
+}
+
+t_name_pushes_window_name_as_title() {
+  local pane code
+  pane="$(new_claude_window pushme)"
+  T rename-window -t main:pushme workname   # manual rename: automatic-rename off
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:workname"; code=$?
+  assert_exit "delivery exits 0" 0 "$code"
+  # allow the title escape a moment to round-trip
+  sleep 1
+  assert_eq "session title became the window name" "workname" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+t_name_suffixes_and_renames_on_collision() {
+  local pane code idx
+  # another live window with the target name, rooted at the same cwd
+  T new-window -t main -n depwork -c "$SCRATCH" bash
+  pane="$(new_claude_window second)"
+  T rename-window -t "main:second" depwork
+  # Once both windows are named "depwork" the name is ambiguous, and unlike
+  # "tmux display" (which quietly picks a match), "tmux list-panes -t" — what
+  # claude_pane_of() uses — refuses an ambiguous name outright ("can't find
+  # window"). Address by window_index instead, exactly as the delivery
+  # contract documents (--from-hook takes "<session>:<window_index>");
+  # window_index is read via the pane id, which is never ambiguous.
+  idx="$(T display -p -t "$pane" '#{window_index}')"
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:$idx"; code=$?
+  assert_exit "collision delivery exits 0" 0 "$code"
+  sleep 1
+  assert_eq "window renamed to the suffixed result" "depwork-2" \
+    "$(T display -p -t "$pane" '#{window_name}')"
+  assert_eq "title matches the suffixed name" "depwork-2" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+t_name_no_claude_pane_is_noop() {
+  local code
+  T new-window -t main -n plain -c "$SCRATCH" bash
+  sut claude-tmux-name --from-hook "main:plain"; code=$?
+  assert_exit "window without claude exits 0 (nothing to push)" 0 "$code"
+}
+
+t_name_unconfirmed_rename_fails() {
+  local pane code
+  # a deaf mock: reads /rename lines but never answers with a title escape —
+  # built fresh via build_mock (not sed-patched from the live mock) so the
+  # fixture can't drift out of sync with a printf format string edited
+  # elsewhere, and so it gets its own real process identity (see setup()).
+  build_mock "$SHIM/2.1.998" deaf
+  T new-window -t main -n deaf -c "$SCRATCH" "PATH=$SHIM:$PATH 2.1.998"
+  sleep 0.4
+  pane="$(T display -p -t main:deaf '#{pane_id}')"
+  T rename-window -t main:deaf silent
+  CLAUDE_TMUX_NAME_TIMEOUT=2 SUT_PANE="$pane" \
+    sut claude-tmux-name --from-hook "main:silent"; code=$?
+  assert_exit "unconfirmed rename exits 1" 1 "$code"
+}
+
+t_track_kicks_push_for_named_window() {
+  local pane uuid="99999999-8888-7777-6666-555555555555"
+  pane="$(new_claude_window kicked)"
+  T rename-window -t main:kicked myproj
+  # Clear sessions.log before track writes, to ensure no self-collision on delivery
+  rm -f "$SCRATCH/.local/state/claude-tmux/sessions.log"
+  hook_json "$uuid" "$SCRATCH" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sleep 2
+  assert_eq "track pushed the deliberate window name" "myproj" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+t_name_repush_does_not_self_collide() {
+  local pane code
+  pane="$(new_claude_window repush)"
+  T rename-window -t main:repush steadyjob
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:steadyjob" >/dev/null; code=$?
+  assert_exit "first delivery exits 0" 0 "$code"
+  sleep 1
+  assert_eq "first delivery lands the exact name" "steadyjob" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+  # Simulate a later SessionStart in the SAME window (e.g. Claude resumes):
+  # claude-tmux-track always logs-then-kicks, so the window's own CURRENT
+  # name lands in sessions.log, under this pane's own pane_id, a moment
+  # before the push fires again. taken_names() must exclude this window's
+  # own pane ids from the log scan — otherwise the name collides with
+  # itself and every re-push walks it to "-2", forever.
+  mkdir -p "$SCRATCH/.local/state/claude-tmux"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$pane" "deadbeef-repush" \
+    "$SCRATCH" "main:0.0" steadyjob >> "$SCRATCH/.local/state/claude-tmux/sessions.log"
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:steadyjob" >/dev/null; code=$?
+  assert_exit "re-push exits 0" 0 "$code"
+  sleep 1
+  assert_eq "window name unchanged on re-push (no self-collision walk)" "steadyjob" \
+    "$(T display -p -t "$pane" '#{window_name}')"
+  assert_eq "title unchanged on re-push (no self-collision walk)" "steadyjob" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+t_name_deferred_guard_release_survives_renumbering() {
+  local pane wid idx code sut_pid
+  # This repo's real tmux.conf ships `renumber-windows on`; the scratch
+  # server doesn't load that config, so turn it on to reproduce the risk.
+  T set -g renumber-windows on
+  # A filler window at a lower index than the claude window: closing it
+  # while the deferred guard-release (a 1s-out backgrounded unset) is still
+  # pending shifts every higher-indexed window's index down by one.
+  T new-window -t main -n filler -c "$SCRATCH" bash
+  T new-window -t main -n depwork3 -c "$SCRATCH" bash   # forces a collision
+  pane="$(new_claude_window renum)"
+  wid="$(T display -p -t "$pane" '#{window_id}')"
+  T rename-window -t "main:renum" depwork3
+  idx="$(T display -p -t "$pane" '#{window_index}')"
+  # Run delivery in the background: it blocks until the mock confirms the
+  # title, which can itself take close to the deferred release's own 1s
+  # budget — running it inline would race our own kill below.
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:$idx" >/dev/null &
+  sut_pid=$!
+  # Give deliver() a moment to set the guard and schedule the deferred
+  # unset — well short of the 1s it waits before firing.
+  sleep 0.3
+  T kill-window -t main:filler
+  wait "$sut_pid"; code=$?
+  assert_exit "renumber-safe delivery exits 0" 0 "$code"
+  # Let the deferred unset's 1s budget (from when it was scheduled, ~0.3s
+  # before the kill above) fully elapse.
+  sleep 1.3
+  assert_eq "guard cleared on the real window despite renumbering" "" \
+    "$(T show -wv -t "$wid" @claude_naming 2>/dev/null)"
+  T set -g renumber-windows off
+}
+
+t_rename_hook_fires_harness() {
+  # The production wiring: after-rename-window → claude-tmux-name. Set the
+  # hook on the scratch server exactly as .tmux.conf sets it, but pointing at
+  # the repo copy under test with the scratch environment.
+  T set-hook -g after-rename-window \
+    "run-shell -b \"HOME='$SCRATCH' PATH='$SHIM:$PATH' '$HERE/claude-tmux-name' --from-hook '#{session_name}:#{window_index}'\""
+  local pane
+  pane="$(new_claude_window hookwin)"
+  T rename-window -t main:hookwin hooked
+  sleep 3
+  assert_eq "prefix+, alone pushes the title" "hooked" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+  T set-hook -gu after-rename-window
+}
+
+t_automatic_rename_format_evaluates_correctly() {
+  # Prove the SHIPPED format string, not a hand-copied duplicate: pull it
+  # straight out of the repo's tmux.conf and evaluate it against a real pane
+  # via `display -p`, exactly the same expansion automatic-rename itself
+  # would perform.
+  local fmt pane host long
+  fmt="$(sed -n "s/^set -g automatic-rename-format '\\(.*\\)'\$/\\1/p" \
+    "$HERE/../../../tmux/.tmux.conf")"
+  if [ -z "$fmt" ]; then
+    fail "automatic-rename-format line found in tmux.conf"; return
+  fi
+  pane="$(new_claude_window fmtwin)"
+  host="$(T display -p -t "$pane" '#{host}')"
+
+  # (a) title is still tmux's own default (the hostname): static label.
+  T select-pane -t "$pane" -T "$host"
+  assert_eq "hostname title renders the static label" "Claude" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # (b) title is fish's preexec text for the claude command, "~" path shape:
+  # same static-label fallback, not the raw preexec text.
+  T select-pane -t "$pane" -T "claude ~/k/dotfiles"
+  assert_eq "fish preexec title (~ path) renders the static label" "Claude" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # (b2) same shape, absolute-path form.
+  T select-pane -t "$pane" -T "claude /tmp/x"
+  assert_eq "fish preexec title (/ path) renders the static label" "Claude" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # (b3) round-2 regression check: a GENUINE conversation summary that
+  # happens to start with "claude " must NOT be swallowed by the preexec
+  # guard — this repo's own transcripts are full of titles shaped exactly
+  # like this. First prove the round-1 guard (a bare "claude *" glob) really
+  # did over-match this title, standalone; then prove the shipped,
+  # path-anchored guard does not.
+  T select-pane -t "$pane" -T "claude code hooks research"
+  local round1_guard
+  round1_guard='#{||:#{==:#{pane_title},#{host}},#{m:claude *,#{pane_title}}}'
+  assert_eq "round-1 guard over-matched a genuine summary (regression evidence)" \
+    "1" "$(T display -p -t "$pane" "$round1_guard")"
+  assert_eq "shipped format renders the summary, not the placeholder" \
+    "claude code hooks resear" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # (c) a real conversation-summary title with a spinner glyph: glyph +
+  # trailing space stripped, the rest rendered as-is.
+  T select-pane -t "$pane" -T "◐ Fix the thing"
+  assert_eq "summary title is stripped of its spinner glyph" "Fix the thing" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # ...and truncated to 24 columns when the stripped result runs long.
+  long="$(printf 'x%.0s' $(seq 1 40))"
+  T select-pane -t "$pane" -T "◐ $long"
+  assert_eq "long summary title truncates to 24 columns" \
+    "$(printf 'x%.0s' $(seq 1 24))" \
+    "$(T display -p -t "$pane" "$fmt")"
+}
+
+# ---------------------------------------------------------------------------
+# claude-tmux-manifest
+# ---------------------------------------------------------------------------
+t_manifest_joins_stamped_panes() {
+  local pane uuid="aaaabbbb-cccc-dddd-eeee-ffff00001111" mf row code
+  pane="$(T display -p -t main:0 '#{pane_id}')"
+  hook_json "$uuid" /tmp/projB | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  T new-window -t main -n unstamped -c "$SCRATCH" bash   # must NOT appear
+  sut claude-tmux-manifest; code=$?
+  assert_exit "manifest exits 0" 0 "$code"
+  mf="$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  row="$(awk -F'\t' -v u="$uuid" '$5 == u' "$mf")"
+  assert_eq "stamped pane appears once" 1 "$(printf '%s' "$row" | grep -c .)"
+  assert_eq "unstamped panes are excluded" 0 \
+    "$(awk -F'\t' '$5 == ""' "$mf" | grep -c . || true)"
+  assert_eq "manifest row carries session name" "main" \
+    "$(printf '%s' "$row" | cut -f1)"
+  assert_eq "manifest row carries cwd" "/tmp/projB" \
+    "$(printf '%s' "$row" | cut -f6)"
+  assert_eq "no temp file left behind" "" \
+    "$(ls "$SCRATCH/.local/state/claude-tmux/" | grep tmp || true)"
+}
+
+t_manifest_fails_on_tmux_error() {
+  local pane uuid="bbbbcccc-dddd-eeee-ffff-000011112222" mf original_content code
+  pane="$(T display -p -t main:0 '#{pane_id}')"
+  # Seed a known-good manifest
+  hook_json "$uuid" /tmp/seed | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sut claude-tmux-manifest >/dev/null
+  mf="$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  original_content="$(cat "$mf")"
+
+  # Point PATH at a tmux shim that exits 1
+  T kill-server 2>/dev/null; sleep 0.2
+  local tmux_shim="$SHIM/tmux"
+  cat > "$tmux_shim" <<'SHIMSCRIPT'
+#!/bin/bash
+exit 1
+SHIMSCRIPT
+  chmod +x "$tmux_shim"
+
+  # Run manifest with the broken tmux; should exit nonzero
+  PATH="$SHIM:$PATH" HOME="$SCRATCH" TMUX="$SOCKPATH,0,0" \
+    "$HERE/claude-tmux-manifest"; code=$?
+  assert_exit "manifest exits nonzero on tmux failure" 1 "$code"
+
+  # Manifest must be unchanged
+  assert_eq "manifest content unchanged after failure" "$original_content" \
+    "$(cat "$mf")"
+
+  # No temp file left behind
+  assert_eq "no temp file leaked on failure" "" \
+    "$(ls "$SCRATCH/.local/state/claude-tmux/" 2>/dev/null | grep tmp || true)"
+
+  # Restore working tmux for later tests
+  rm "$tmux_shim"
+  T -f /dev/null new-session -d -s main -x 120 -y 30 bash 2>/dev/null || true
+  sleep 0.3
+}
+
+t_manifest_sanitizes_tab_in_cwd() {
+  local pane uuid="ccccdddd-eeee-ffff-0000-111122223333" mf row field_count cwd_field code
+  pane="$(T display -p -t main:0 '#{pane_id}')"
+  # Construct hook JSON with tab in cwd; tab must be escaped as \t in JSON string,
+  # then python's json.load() will parse it as a literal tab for track to sanitize.
+  local cwd_with_escaped_tab="/tmp/proj\\tect"
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"SessionStart"}' "$uuid" "$cwd_with_escaped_tab" | \
+    SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sut claude-tmux-manifest; code=$?
+  assert_exit "manifest with tab-cwd exits 0" 0 "$code"
+
+  mf="$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  row="$(awk -F'\t' -v u="$uuid" '$5 == u' "$mf")"
+
+  # Verify exactly 7 fields (tab in cwd should be replaced with space)
+  field_count="$(printf '%s' "$row" | awk -F'\t' '{print NF}')"
+  assert_eq "manifest row has exactly 7 fields" 7 "$field_count"
+
+  # Verify the cwd field has the space-flattened path (field 6)
+  cwd_field="$(printf '%s' "$row" | cut -f6)"
+  assert_eq "cwd field carries space-flattened path" "/tmp/proj ect" "$cwd_field"
+}
+
+# ---------------------------------------------------------------------------
+# claude-tmux-name --resolve-name (pure seam: text in, text out, no tmux)
+# ---------------------------------------------------------------------------
+resolve() { # <raw> <taken newline-list>
+  printf '%s' "$2" | "$HERE/claude-tmux-name" --resolve-name "$1"
+}
+
+t_resolve_sanitizes() {
+  assert_eq "spaces and punctuation collapse to dashes" "auth-fix" \
+    "$(resolve 'auth fix!' '')"
+  assert_eq "dots and colons become underscores" "v1_2_api" \
+    "$(resolve 'v1.2:api' '')"
+  assert_eq "runs of dashes collapse" "a-b" "$(resolve 'a---b' '')"
+  assert_eq "edge dashes trim" "x" "$(resolve '--x--' '')"
+  assert_eq "colon in name produces underscore not dash-suffix" "auth_2" \
+    "$(resolve 'auth:2' '')"
+  local out
+  out="$(resolve 'café münchen' '')"
+  assert_eq "non-ASCII letters replaced with dashes" "caf-m-nchen" "$out"
+  # Invariant: output contains only [A-Za-z0-9_-]
+  if [[ "$out" =~ ^[A-Za-z0-9_-]*$ ]]; then
+    ok
+  else
+    fail "output contains only [A-Za-z0-9_-]"; printf '        got: %s\n' "$out"
+  fi
+}
+
+t_resolve_walks_suffixes() {
+  assert_eq "free name passes through" "auth" "$(resolve auth 'other')"
+  assert_eq "taken name gets -2" "auth-2" "$(resolve auth 'auth')"
+  assert_eq "suffix walks past taken suffixes" "auth-3" \
+    "$(resolve auth "$(printf 'auth\nauth-2')")"
+}
+
+t_resolve_empty_fails() {
+  local out code
+  out="$(resolve '!!!' '')"; code=$?
+  assert_exit "unsalvageable name exits 1" 1 "$code"
+  assert_eq "unsalvageable name prints nothing" "" "$out"
+}
+
+# ---------------------------------------------------------------------------
+# claude-tmux-revive
+# ---------------------------------------------------------------------------
+typed_line() { # <pane> — last non-empty line of the pane's visible content
+  T capture-pane -p -t "$1" | grep -v '^$' | tail -1
+}
+
+t_revive_types_manifest_uuid() {
+  local pane uuid="12121212-3434-5656-7878-909090909090" code
+  T new-window -t main -n revme -c "$SCRATCH" bash
+  sleep 0.3
+  pane="$(T display -p -t main:revme '#{pane_id}')"
+  hook_json "$uuid" "$SCRATCH" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sut claude-tmux-manifest
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "revive exits 0 on manifest hit" 0 "$code"
+  sleep 0.3
+  case "$(typed_line "$pane")" in
+    *"claude --resume $uuid") ok;;
+    *) fail "revive typed the exact resume command"; \
+       printf '        got: %s\n' "$(typed_line "$pane")";;
+  esac
+}
+
+t_revive_guards_live_claude() {
+  local pane code typed_count
+  pane="$(new_claude_window alive)"
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "revive against live claude exits 0" 0 "$code"
+  typed_count="$(T capture-pane -p -t "$pane" | grep -c 'claude --resume' || true)"
+  assert_eq "revive typed nothing into a live claude" 0 "$typed_count"
+}
+
+t_revive_falls_back_to_cwd() {
+  local pane uuid="fefefefe-0000-1111-2222-333333333333" code
+  # log entry exists, manifest does NOT (session started after last autosave)
+  mkdir -p "$SCRATCH/projC"
+  T new-window -t main -n cwdfall -c "$SCRATCH/projC" bash
+  sleep 0.3
+  pane="$(T display -p -t main:cwdfall '#{pane_id}')"
+  hook_json "$uuid" "$SCRATCH/projC" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  rm -f "$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "cwd fallback exits 0" 0 "$code"
+  sleep 0.3
+  case "$(typed_line "$pane")" in
+    *"claude --resume $uuid") ok;;
+    *) fail "cwd fallback typed the resume command";;
+  esac
+}
+
+t_revive_nothing_recorded() {
+  local pane code
+  T new-window -t main -n empty -c "$SCRATCH" bash
+  sleep 0.3
+  pane="$(T display -p -t main:empty '#{pane_id}')"
+  rm -f "$SCRATCH/.local/state/claude-tmux/manifest.tsv" \
+        "$SCRATCH/.local/state/claude-tmux/sessions.log"
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "nothing recorded exits 1" 1 "$code"
+  assert_eq "nothing typed when nothing recorded" "" \
+    "$(typed_line "$pane" | grep 'claude --resume' || true)"
+}
+
+main() {
+  setup
+  trap teardown EXIT
+  t_track_stamps_pane_and_log
+  t_track_no_tmux_is_noop
+  t_track_bad_json_is_noop
+  t_track_concurrent_trim_no_data_loss
+  t_track_fail_open_on_held_lock
+  t_name_pushes_window_name_as_title
+  t_name_suffixes_and_renames_on_collision
+  t_name_no_claude_pane_is_noop
+  t_name_unconfirmed_rename_fails
+  t_track_kicks_push_for_named_window
+  t_name_repush_does_not_self_collide
+  t_name_deferred_guard_release_survives_renumbering
+  t_rename_hook_fires_harness
+  t_automatic_rename_format_evaluates_correctly
+  t_manifest_joins_stamped_panes
+  t_manifest_fails_on_tmux_error
+  t_manifest_sanitizes_tab_in_cwd
+  t_resolve_sanitizes
+  t_resolve_walks_suffixes
+  t_resolve_empty_fails
+  t_revive_types_manifest_uuid
+  t_revive_guards_live_claude
+  t_revive_falls_back_to_cwd
+  t_revive_nothing_recorded
+  printf '%d passed, %d failed\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+}
+main

@@ -63,20 +63,46 @@ until you run `git submodule sync --recursive` — see
 ## tmux + Claude Code
 
 `tmux/.tmux.conf` carries a few settings that exist specifically because Claude Code (and
-any other full-screen TUI) lives in these panes. Reload with `prefix r` after changing it;
+any other full-screen TUI) lives in these panes. Reload with `prefix R` after changing it;
 already-running Claude processes need a restart to pick up the environment.
 
 | Setting / binding | Why |
 |---|---|
 | `set-environment -g CLAUDE_CODE_TMUX_TRUECOLOR 1` | Claude clamps itself to 256 colours whenever `$TMUX` is set, which renders its orange (`#d97757`) as pink (colour 174). This opts out. |
 | `set -g focus-events on` | Claude tracks focus to pause its spinner when you are in another pane. |
-| `set -g mouse on` | Claude renders inline on the normal screen, so without it the wheel does nothing. Drag-select is piped to `pbcopy`; hold Option in WezTerm for a native selection. |
-| `set -g history-limit 50000` | One AI turn can exceed the 2000-line default scrollback. |
+| `set -g mouse off` | Off on purpose — see [Which tmux binary runs here](#which-tmux-binary-runs-here). Every mouse gesture in a plain pane is a copy-mode entry, and copy-mode entry is where tmux 3.7 aborted the whole server on macOS 26. Scrollback is `prefix [`; selection is WezTerm-native. Claude nags about the wheel; ignore it. |
+| `set -g history-limit 200000` | One AI turn can exceed the 2000-line default scrollback. |
 | `bind -n C-f` (root table) | A fish binding only fires at a fish prompt. Root-table means tmux intercepts Ctrl-f ahead of the TUI, so the sessionizer jump works from inside Claude. vim/`less`/`man`/`fzf` still get it passed through. |
 | `bind F` → `tmux-session-here` | Second/third session for the *same* directory (`dotfiles-review`, `dotfiles-2`), for running more than one Claude conversation on one repo. Siblings show up in the Ctrl-f picker as `[TMUX] …`. |
 | `bind A` → `<project>-ask` | The common case of the above: a `claude --permission-mode plan` sidecar. Read-only, so you can ask it something while another agent is mid-edit without racing it or breaking its flow. One per project — press again to return to it. |
+| `prefix r` → revive / `prefix R` → reload | After a restore, `r` types `claude --resume <exact-uuid>` for the conversation this pane held (manifest → cwd-match → picker hint). Reload moved to `R`. |
 
 Rationale in [`docs/adr/0004-tmux-tuned-for-claude-code.md`](docs/adr/0004-tmux-tuned-for-claude-code.md).
+
+### Which tmux binary runs here
+
+**Not Homebrew's.** tmux is a local build at `~/.local/bin/tmux`: upstream's
+`release_3.7c` branch, configured with `--enable-utf8proc --enable-jemalloc`.
+
+Homebrew's 3.7b bottle links macOS's system allocator, which corrupts the heap
+during copy-mode entry on macOS 26 and SIGABRTs the server — every session dies
+at once, four times in one day here (stack:
+`window_copy_clone_screen → grid_free_line → SIGABRT`; upstream
+[tmux#5302](https://github.com/tmux/tmux/issues/5302) /
+[tmux#5385](https://github.com/tmux/tmux/issues/5385)). Upstream's response was
+to make jemalloc the default allocator on macOS; 3.7c is exactly 3.7b plus that
+change. `bin/.local/bin/tmux-swap-37c` is the one-shot cutover that performed
+the switch (kept as the record of the procedure).
+
+Consequences to remember:
+
+- `brew upgrade` neither updates nor breaks this tmux — the formula is
+  **unlinked**, not uninstalled. Rollback is `brew link tmux`.
+- When Homebrew ships a jemalloc-linked tmux (3.7c or later — check
+  `otool -L $(brew --prefix)/bin/tmux | grep jemalloc`), return to it:
+  `brew upgrade tmux && brew link tmux && rm ~/.local/bin/tmux`.
+- A fresh machine following `./install` gets no tmux from this repo; build it
+  as above or verify the Homebrew bottle links jemalloc before trusting it.
 
 ## Teaching workspaces (`teach`)
 
