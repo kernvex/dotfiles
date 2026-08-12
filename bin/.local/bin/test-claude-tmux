@@ -329,6 +329,33 @@ t_track_kicks_push_for_named_window() {
     "$(T display -p -t "$pane" '#{pane_title}')"
 }
 
+t_name_repush_does_not_self_collide() {
+  local pane code
+  pane="$(new_claude_window repush)"
+  T rename-window -t main:repush steadyjob
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:steadyjob" >/dev/null; code=$?
+  assert_exit "first delivery exits 0" 0 "$code"
+  sleep 1
+  assert_eq "first delivery lands the exact name" "steadyjob" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+  # Simulate a later SessionStart in the SAME window (e.g. Claude resumes):
+  # claude-tmux-track always logs-then-kicks, so the window's own CURRENT
+  # name lands in sessions.log, under this pane's own pane_id, a moment
+  # before the push fires again. taken_names() must exclude this window's
+  # own pane ids from the log scan — otherwise the name collides with
+  # itself and every re-push walks it to "-2", forever.
+  mkdir -p "$SCRATCH/.local/state/claude-tmux"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$pane" "deadbeef-repush" \
+    "$SCRATCH" "main:0.0" steadyjob >> "$SCRATCH/.local/state/claude-tmux/sessions.log"
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:steadyjob" >/dev/null; code=$?
+  assert_exit "re-push exits 0" 0 "$code"
+  sleep 1
+  assert_eq "window name unchanged on re-push (no self-collision walk)" "steadyjob" \
+    "$(T display -p -t "$pane" '#{window_name}')"
+  assert_eq "title unchanged on re-push (no self-collision walk)" "steadyjob" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
 t_name_deferred_guard_release_survives_renumbering() {
   local pane wid idx code sut_pid
   # This repo's real tmux.conf ships `renumber-windows on`; the scratch
@@ -563,6 +590,7 @@ main() {
   t_name_no_claude_pane_is_noop
   t_name_unconfirmed_rename_fails
   t_track_kicks_push_for_named_window
+  t_name_repush_does_not_self_collide
   t_name_deferred_guard_release_survives_renumbering
   t_manifest_joins_stamped_panes
   t_manifest_fails_on_tmux_error

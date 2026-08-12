@@ -80,7 +80,17 @@ taken_names() { # <cwd> <own-window-id> — live windows on this cwd + our recor
       -F "#{window_id}$(printf '\t')#{pane_current_path}$(printf '\t')#{window_name}" | sort -u)
   # Names we previously pushed for this cwd (titles have no greppable store —
   # spec fallback: our own records are the source of truth for pushed names).
-  awk -F'\t' -v c="$1" '$4 == c { print $6 }' "$STATE/sessions.log" 2>/dev/null | sort -u
+  # Exclude the target window's own pane ids (log column 2): claude-tmux-
+  # track always logs-then-kicks, so the window being (re-)named has just
+  # logged its OWN current name a moment earlier under that cwd — without
+  # this filter that self-record collides with itself and every re-push
+  # walks the name to its own "-2", forever.
+  local own_panes
+  own_panes="$(tmux list-panes -t "$2" -F '#{pane_id}' 2>/dev/null)"
+  awk -F'\t' -v c="$1" -v panes="$own_panes" '
+    BEGIN { n = split(panes, p, "\n"); for (i = 1; i <= n; i++) own[p[i]] = 1 }
+    $4 == c && !($2 in own) { print $6 }
+  ' "$STATE/sessions.log" 2>/dev/null | sort -u
 }
 
 deliver() { # <window-target>
