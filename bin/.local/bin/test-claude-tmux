@@ -110,62 +110,92 @@ t_track_bad_json_is_noop() {
     "$(T show -pv -t "$pane" @claude_session 2>/dev/null)"
 }
 
-t_track_trim_behavior() {
-  local pane uuid log_file line_count new_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-  pane="$(T display -p -t main '#{pane_id}')"
+t_track_concurrent_trim_no_data_loss() {
+  local log_file pane i uuid line_count present_count
   log_file="$SCRATCH/.local/state/claude-tmux/sessions.log"
-
-  # Seed the log with 2500 lines to trigger trimming.
   mkdir -p "$(dirname "$log_file")"
-  local i
-  for i in $(seq 1 2500); do
-    printf '%d\t%s\t old-uuid-%d\t/tmp/old\tmain:0.0\twindow\n' "$((1000000 + i))" "%0" "$i" >> "$log_file"
+
+  # Seed the log with 1980 lines (so 1980 + ~25 concurrent = 2005+, triggers trim).
+  for i in $(seq 1 1980); do
+    printf '%d\tpane-id\told-uuid-%04d\t/tmp/old\tmain:0.0\twindow\n' "$((1000000 + i))" "$i" >> "$log_file"
   done
 
-  # Invoke track; should trim the log and append the new line.
-  hook_json "$new_uuid" /tmp/new | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  # Launch ~25 concurrent track invocations, each with unique UUID.
+  # This will cross the trim threshold mid-race. All new lines must survive.
+  local pids=()
+  for i in $(seq 1 25); do
+    pane="$(T display -p -t main '#{pane_id}')"
+    uuid="concurrent-uuid-$(printf '%04d' "$i")"
+    hook_json "$uuid" /tmp/concurrent | SUT_PANE="$pane" sut claude-tmux-track >/dev/null &
+    pids+=($!)
+  done
 
-  # Check log was trimmed: line count should be ~1001 (1000 kept + 1 new).
+  # Wait for all background jobs.
+  for pid in "${pids[@]}"; do
+    wait "$pid"
+  done
+
+  # Assert all 25 new UUIDs are present (zero data loss).
+  present_count=0
+  for i in $(seq 1 25); do
+    uuid="concurrent-uuid-$(printf '%04d' "$i")"
+    if grep -q "$uuid" "$log_file"; then
+      present_count=$((present_count + 1))
+    fi
+  done
+  assert_eq "concurrent trim: all 25 UUIDs present (no data loss)" 25 "$present_count"
+
+  # Assert log length is reasonable: ~1000 kept + 25 new = ~1025.
   line_count="$(wc -l < "$log_file" 2>/dev/null || echo 0)"
   if [ "$line_count" -le 1100 ] && [ "$line_count" -ge 1000 ]; then
     ok
   else
-    fail "trim behavior: line count after trim"; printf '        want ~1001 lines, got %d\n' "$line_count"
+    fail "concurrent trim: log length sane"; printf '        want 1000-1100 lines, got %d\n' "$line_count"
   fi
-
-  # Check the last line is the new entry with the new UUID.
-  local last_line
-  last_line="$(tail -1 "$log_file")"
-  local uuid_in_log="$(printf '%s' "$last_line" | cut -f3)"
-  assert_eq "trim behavior: new line appended after trim" "$new_uuid" "$uuid_in_log"
 }
 
-t_track_fail_open_on_stale_lock() {
-  local pane uuid lock_dir log_file code
+t_track_fail_open_on_held_lock() {
+  local pane uuid lock_dir log_file code start_time end_time elapsed
   pane="$(T display -p -t main '#{pane_id}')"
-  uuid="cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa"
+  uuid="dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb"
   lock_dir="$SCRATCH/.local/state/claude-tmux/.lock"
   log_file="$SCRATCH/.local/state/claude-tmux/sessions.log"
-
-  # Pre-create a stale lock (over 30 seconds old) to force fail-open path.
   mkdir -p "$(dirname "$lock_dir")"
-  mkdir "$lock_dir"
-  touch -t 202601010000 "$lock_dir"  # Set to Jan 1, 2026 00:00
 
-  # Invoke track; should fail to acquire lock but still append (fail open) and exit 0.
-  hook_json "$uuid" /tmp/test | SUT_PANE="$pane" sut claude-tmux-track >/dev/null; code=$?
+  # Start a background process that holds the lock directory for a few seconds.
+  # This is a FRESH lock (mtime = now), so stale-breaker cannot clear it.
+  (mkdir "$lock_dir" 2>/dev/null && sleep 3) &
+  local holder_pid=$!
+  sleep 0.1  # Ensure lock is held before we try to acquire
+
+  # Time the track invocation to ensure bounded acquisition.
+  start_time="$(date +%s%N)"
+  hook_json "$uuid" /tmp/fail-open | SUT_PANE="$pane" sut claude-tmux-track >/dev/null; code=$?
+  end_time="$(date +%s%N)"
+  elapsed=$(( (end_time - start_time) / 1000000 ))  # Convert ns to ms
 
   assert_exit "fail-open exits 0" 0 "$code"
 
-  # Check that the line was still appended despite lock failure.
+  # Assert bounded acquisition: should complete in <2s (5 retries * ~50ms each = ~250ms max).
+  if [ "$elapsed" -lt 2000 ]; then
+    ok
+  else
+    fail "fail-open: bounded acquisition"; printf '        invocation took %d ms, want <2000ms\n' "$elapsed"
+  fi
+
+  # Check that the line was still appended despite lock contention (fail open).
   if [ -f "$log_file" ]; then
     local last_line
     last_line="$(tail -1 "$log_file" 2>/dev/null)"
     local uuid_in_log="$(printf '%s' "$last_line" | cut -f3 2>/dev/null)"
-    assert_eq "fail-open: line appended despite stale lock" "$uuid" "$uuid_in_log"
+    assert_eq "fail-open: line appended despite held lock" "$uuid" "$uuid_in_log"
   else
     fail "fail-open: log file not created"
   fi
+
+  # Clean up the lock holder.
+  kill $holder_pid 2>/dev/null
+  wait $holder_pid 2>/dev/null
 }
 
 main() {
@@ -174,8 +204,8 @@ main() {
   t_track_stamps_pane_and_log
   t_track_no_tmux_is_noop
   t_track_bad_json_is_noop
-  t_track_trim_behavior
-  t_track_fail_open_on_stale_lock
+  t_track_concurrent_trim_no_data_loss
+  t_track_fail_open_on_held_lock
   printf '%d passed, %d failed\n' "$PASS" "$FAIL"
   [ "$FAIL" -eq 0 ]
 }
