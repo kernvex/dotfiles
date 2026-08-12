@@ -63,7 +63,7 @@ until you run `git submodule sync --recursive` — see
 ## tmux + Claude Code
 
 `tmux/.tmux.conf` carries a few settings that exist specifically because Claude Code (and
-any other full-screen TUI) lives in these panes. Reload with `prefix r` after changing it;
+any other full-screen TUI) lives in these panes. Reload with `prefix R` after changing it;
 already-running Claude processes need a restart to pick up the environment.
 
 | Setting / binding | Why |
