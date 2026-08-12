@@ -215,6 +215,36 @@ t_track_fail_open_on_held_lock() {
   wait $holder_pid 2>/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# claude-tmux-name --resolve-name (pure seam: text in, text out, no tmux)
+# ---------------------------------------------------------------------------
+resolve() { # <raw> <taken newline-list>
+  printf '%s' "$2" | "$HERE/claude-tmux-name" --resolve-name "$1"
+}
+
+t_resolve_sanitizes() {
+  assert_eq "spaces and punctuation collapse to dashes" "auth-fix" \
+    "$(resolve 'auth fix!' '')"
+  assert_eq "dots and colons cannot survive into a tmux target" "v1_2-api" \
+    "$(resolve 'v1.2:api' '')"
+  assert_eq "runs of dashes collapse" "a-b" "$(resolve 'a---b' '')"
+  assert_eq "edge dashes trim" "x" "$(resolve '--x--' '')"
+}
+
+t_resolve_walks_suffixes() {
+  assert_eq "free name passes through" "auth" "$(resolve auth 'other')"
+  assert_eq "taken name gets -2" "auth-2" "$(resolve auth 'auth')"
+  assert_eq "suffix walks past taken suffixes" "auth-3" \
+    "$(resolve auth "$(printf 'auth\nauth-2')")"
+}
+
+t_resolve_empty_fails() {
+  local out code
+  out="$(resolve '!!!' '')"; code=$?
+  assert_exit "unsalvageable name exits 1" 1 "$code"
+  assert_eq "unsalvageable name prints nothing" "" "$out"
+}
+
 main() {
   setup
   trap teardown EXIT
@@ -223,6 +253,9 @@ main() {
   t_track_bad_json_is_noop
   t_track_concurrent_trim_no_data_loss
   t_track_fail_open_on_held_lock
+  t_resolve_sanitizes
+  t_resolve_walks_suffixes
+  t_resolve_empty_fails
   printf '%d passed, %d failed\n' "$PASS" "$FAIL"
   [ "$FAIL" -eq 0 ]
 }

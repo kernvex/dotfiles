@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# claude-tmux-name — one handle for a tmux window and the Claude session in it.
+#
+# Modes:
+#   --resolve-name <raw>   pure seam: sanitize <raw>, read taken names (one
+#                          per line) from stdin, print the first free name.
+#                          Exit 1 if nothing sanitizes out. No tmux touched.
+#   (delivery modes are added by the naming-harness task)
+#
+# Sanitising follows tmux-session-here exactly: tmux treats `.` and `:` as
+# target-spec separators, so they become underscores; anything else outside
+# [A-Za-z0-9_-] collapses to a dash; dash runs collapse; edge dashes trim.
+# Collisions walk -2, -3, … — same convention as tmux-session-here's
+# auto-numbered sibling sessions, never a prompt.
+set -uo pipefail
+
+sanitize() {
+  local name="$1"
+  name="$(printf '%s' "$name" | tr '.:' '_-')"
+  name="${name//[^A-Za-z0-9_-]/-}"
+  while [[ $name == *--* ]]; do name="${name//--/-}"; done
+  while [[ $name == -* ]]; do name="${name#-}"; done
+  while [[ $name == *- ]]; do name="${name%-}"; done
+  printf '%s' "$name"
+}
+
+resolve_name() { # <raw>; taken list on stdin
+  local base taken candidate n
+  base="$(sanitize "$1")"
+  [ -n "$base" ] || return 1
+  taken="$(cat)"
+  candidate="$base"
+  n=2
+  while printf '%s\n' "$taken" | grep -qxF "$candidate"; do
+    candidate="$base-$n"
+    n=$((n + 1))
+  done
+  printf '%s\n' "$candidate"
+}
+
+case "${1:-}" in
+  --resolve-name)
+    [ $# -ge 2 ] || { echo "usage: claude-tmux-name --resolve-name <raw>" >&2; exit 2; }
+    resolve_name "$2"
+    ;;
+  *)
+    echo "usage: claude-tmux-name --resolve-name <raw>" >&2
+    exit 2
+    ;;
+esac
