@@ -482,6 +482,70 @@ t_resolve_empty_fails() {
   assert_eq "unsalvageable name prints nothing" "" "$out"
 }
 
+# ---------------------------------------------------------------------------
+# claude-tmux-revive
+# ---------------------------------------------------------------------------
+typed_line() { # <pane> — last non-empty line of the pane's visible content
+  T capture-pane -p -t "$1" | grep -v '^$' | tail -1
+}
+
+t_revive_types_manifest_uuid() {
+  local pane uuid="12121212-3434-5656-7878-909090909090" code
+  T new-window -t main -n revme -c "$SCRATCH" bash
+  sleep 0.3
+  pane="$(T display -p -t main:revme '#{pane_id}')"
+  hook_json "$uuid" "$SCRATCH" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sut claude-tmux-manifest
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "revive exits 0 on manifest hit" 0 "$code"
+  sleep 0.3
+  case "$(typed_line "$pane")" in
+    *"claude --resume $uuid") ok;;
+    *) fail "revive typed the exact resume command"; \
+       printf '        got: %s\n' "$(typed_line "$pane")";;
+  esac
+}
+
+t_revive_guards_live_claude() {
+  local pane code
+  pane="$(new_claude_window alive)"
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "revive against live claude exits 0" 0 "$code"
+  assert_eq "revive typed nothing into a live claude" "" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+t_revive_falls_back_to_cwd() {
+  local pane uuid="fefefefe-0000-1111-2222-333333333333" code
+  # log entry exists, manifest does NOT (session started after last autosave)
+  mkdir -p "$SCRATCH/projC"
+  T new-window -t main -n cwdfall -c "$SCRATCH/projC" bash
+  sleep 0.3
+  pane="$(T display -p -t main:cwdfall '#{pane_id}')"
+  hook_json "$uuid" "$SCRATCH/projC" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  rm -f "$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "cwd fallback exits 0" 0 "$code"
+  sleep 0.3
+  case "$(typed_line "$pane")" in
+    *"claude --resume $uuid") ok;;
+    *) fail "cwd fallback typed the resume command";;
+  esac
+}
+
+t_revive_nothing_recorded() {
+  local pane code
+  T new-window -t main -n empty -c "$SCRATCH" bash
+  sleep 0.3
+  pane="$(T display -p -t main:empty '#{pane_id}')"
+  rm -f "$SCRATCH/.local/state/claude-tmux/manifest.tsv" \
+        "$SCRATCH/.local/state/claude-tmux/sessions.log"
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "nothing recorded exits 1" 1 "$code"
+  assert_eq "nothing typed when nothing recorded" "" \
+    "$(typed_line "$pane" | grep 'claude --resume' || true)"
+}
+
 main() {
   setup
   trap teardown EXIT
@@ -502,6 +566,10 @@ main() {
   t_resolve_sanitizes
   t_resolve_walks_suffixes
   t_resolve_empty_fails
+  t_revive_types_manifest_uuid
+  t_revive_guards_live_claude
+  t_revive_falls_back_to_cwd
+  t_revive_nothing_recorded
   printf '%d passed, %d failed\n' "$PASS" "$FAIL"
   [ "$FAIL" -eq 0 ]
 }

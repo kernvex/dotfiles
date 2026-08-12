@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# claude-tmux-revive <pane_id> — bring back the exact Claude conversation this
+# pane held. Bound to prefix+r.
+#
+# Resolution ladder (spec: no silent failure at any rung):
+#   1. manifest.tsv row for this pane's coordinates — exact: written at the
+#      same autosave the restored layout came from.
+#   2. newest sessions.log entry for this pane's cwd — the session started
+#      after the last autosave; probably right, says so out loud.
+#   3. a hint at claude --resume's own picker.
+#
+# The command is TYPED at the prompt, not executed: visible, cancellable with
+# Ctrl-C, in shell history once run. The user presses Enter to launch.
+set -uo pipefail
+
+STATE="$HOME/.local/state/claude-tmux"
+MF="$STATE/manifest.tsv"
+LOG="$STATE/sessions.log"
+
+pane="${1:-}"
+[ -n "$pane" ] || { echo "usage: claude-tmux-revive <pane_id>" >&2; exit 2; }
+
+msg() { tmux display-message -t "$pane" "claude-tmux-revive: $1"; }
+is_claude_cmd() { case "$1" in [0-9]*|claude) return 0;; *) return 1;; esac }
+
+cmd="$(tmux display -p -t "$pane" '#{pane_current_command}')"
+if is_claude_cmd "$cmd"; then
+  msg "claude already running here — nothing to do"
+  exit 0
+fi
+
+TAB="$(printf '\t')"
+IFS="$TAB" read -r sess win pidx cwd < <(tmux display -p -t "$pane" \
+  "#{session_name}${TAB}#{window_index}${TAB}#{pane_index}${TAB}#{pane_current_path}")
+
+uuid="$(awk -F'\t' -v s="$sess" -v w="$win" -v p="$pidx" \
+  '$1==s && $2==w && $3==p { print $5; exit }' "$MF" 2>/dev/null || true)"
+
+if [ -z "$uuid" ]; then
+  # Last matching line wins: the log is append-only, so last = newest.
+  uuid="$(awk -F'\t' -v c="$cwd" '$4==c { u=$3 } END { if (u) print u }' \
+    "$LOG" 2>/dev/null || true)"
+  [ -n "$uuid" ] && msg "no manifest row — matched by cwd (session newer than last autosave)"
+fi
+
+if [ -z "$uuid" ]; then
+  msg "no session recorded for this pane — try: claude --resume"
+  exit 1
+fi
+
+tmux send-keys -t "$pane" -l "claude --resume $uuid"
+exit 0
