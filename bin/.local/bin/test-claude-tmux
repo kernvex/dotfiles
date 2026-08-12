@@ -404,6 +404,45 @@ t_rename_hook_fires_harness() {
   T set-hook -gu after-rename-window
 }
 
+t_automatic_rename_format_evaluates_correctly() {
+  # Prove the SHIPPED format string, not a hand-copied duplicate: pull it
+  # straight out of the repo's tmux.conf and evaluate it against a real pane
+  # via `display -p`, exactly the same expansion automatic-rename itself
+  # would perform.
+  local fmt pane host long
+  fmt="$(sed -n "s/^set -g automatic-rename-format '\\(.*\\)'\$/\\1/p" \
+    "$HERE/../../../tmux/.tmux.conf")"
+  if [ -z "$fmt" ]; then
+    fail "automatic-rename-format line found in tmux.conf"; return
+  fi
+  pane="$(new_claude_window fmtwin)"
+  host="$(T display -p -t "$pane" '#{host}')"
+
+  # (a) title is still tmux's own default (the hostname): static label.
+  T select-pane -t "$pane" -T "$host"
+  assert_eq "hostname title renders the static label" "Claude" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # (b) title is fish's preexec text for the claude command ("claude <pwd>"):
+  # same static-label fallback, not the raw preexec text.
+  T select-pane -t "$pane" -T "claude ~/k/dotfiles"
+  assert_eq "fish preexec title renders the static label" "Claude" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # (c) a real conversation-summary title: spinner glyph + trailing space
+  # stripped, the rest rendered as-is.
+  T select-pane -t "$pane" -T "◐ Fix the thing"
+  assert_eq "summary title is stripped of its spinner glyph" "Fix the thing" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # ...and truncated to 24 columns when the stripped result runs long.
+  long="$(printf 'x%.0s' $(seq 1 40))"
+  T select-pane -t "$pane" -T "◐ $long"
+  assert_eq "long summary title truncates to 24 columns" \
+    "$(printf 'x%.0s' $(seq 1 24))" \
+    "$(T display -p -t "$pane" "$fmt")"
+}
+
 # ---------------------------------------------------------------------------
 # claude-tmux-manifest
 # ---------------------------------------------------------------------------
@@ -608,6 +647,7 @@ main() {
   t_name_repush_does_not_self_collide
   t_name_deferred_guard_release_survives_renumbering
   t_rename_hook_fires_harness
+  t_automatic_rename_format_evaluates_correctly
   t_manifest_joins_stamped_panes
   t_manifest_fails_on_tmux_error
   t_manifest_sanitizes_tab_in_cwd
