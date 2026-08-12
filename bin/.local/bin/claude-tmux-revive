@@ -9,6 +9,10 @@
 #      after the last autosave; probably right, says so out loud.
 #   3. a hint at claude --resume's own picker.
 #
+# Every rung ends in exit 0: the status is read only by run-shell, which paints
+# "'<cmd>' returned N" over the message line on failure and so would hide the
+# rung's own diagnosis. Exit 2 (no pane argument) is a caller bug, not a rung.
+#
 # The command is TYPED at the prompt, not executed: visible, cancellable with
 # Ctrl-C, in shell history once run. The user presses Enter to launch.
 set -uo pipefail
@@ -45,7 +49,11 @@ fi
 
 if [ -z "$uuid" ]; then
   msg "no session recorded for this pane — try: claude --resume"
-  exit 1
+  # Exit 0, not 1. run-shell overwrites the message line with its own
+  # "'<cmd>' returned 1" whenever the child fails, erasing the hint the user
+  # actually needs. Nothing consumes this status but tmux, and the delivered
+  # message is the successful outcome of the last rung — not a failure.
+  exit 0
 fi
 
 tmux send-keys -t "$pane" -l "claude --resume $uuid"

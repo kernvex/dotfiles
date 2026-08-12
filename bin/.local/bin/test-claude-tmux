@@ -646,7 +646,12 @@ t_revive_nothing_recorded() {
   rm -f "$SCRATCH/.local/state/claude-tmux/manifest.tsv" \
         "$SCRATCH/.local/state/claude-tmux/sessions.log"
   sut claude-tmux-revive "$pane"; code=$?
-  assert_exit "nothing recorded exits 1" 1 "$code"
+  # Exit 0, not 1: run-shell reports a nonzero child as "'<cmd>' returned N"
+  # on the message line — over the very guidance this rung exists to deliver.
+  # The message IS the outcome, so the rung must not fail the process.
+  assert_exit "nothing recorded exits 0" 0 "$code"
+  assert_eq "guidance message reaches the user" "yes" \
+    "$(T show-messages | grep -q 'no session recorded' && echo yes || echo no)"
   assert_eq "nothing typed when nothing recorded" "" \
     "$(typed_line "$pane" | grep 'claude --resume' || true)"
 }
