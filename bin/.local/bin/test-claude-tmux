@@ -359,6 +359,29 @@ t_name_deferred_guard_release_survives_renumbering() {
 }
 
 # ---------------------------------------------------------------------------
+# claude-tmux-manifest
+# ---------------------------------------------------------------------------
+t_manifest_joins_stamped_panes() {
+  local pane uuid="aaaabbbb-cccc-dddd-eeee-ffff00001111" mf row code
+  pane="$(T display -p -t main:0 '#{pane_id}')"
+  hook_json "$uuid" /tmp/projB | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  T new-window -t main -n unstamped -c "$SCRATCH" bash   # must NOT appear
+  sut claude-tmux-manifest; code=$?
+  assert_exit "manifest exits 0" 0 "$code"
+  mf="$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  row="$(awk -F'\t' -v u="$uuid" '$5 == u' "$mf")"
+  assert_eq "stamped pane appears once" 1 "$(printf '%s' "$row" | grep -c .)"
+  assert_eq "unstamped panes are excluded" 0 \
+    "$(awk -F'\t' '$5 == ""' "$mf" | grep -c . || true)"
+  assert_eq "manifest row carries session name" "main" \
+    "$(printf '%s' "$row" | cut -f1)"
+  assert_eq "manifest row carries cwd" "/tmp/projB" \
+    "$(printf '%s' "$row" | cut -f6)"
+  assert_eq "no temp file left behind" "" \
+    "$(ls "$SCRATCH/.local/state/claude-tmux/" | grep tmp || true)"
+}
+
+# ---------------------------------------------------------------------------
 # claude-tmux-name --resolve-name (pure seam: text in, text out, no tmux)
 # ---------------------------------------------------------------------------
 resolve() { # <raw> <taken newline-list>
@@ -413,6 +436,7 @@ main() {
   t_name_unconfirmed_rename_fails
   t_track_kicks_push_for_named_window
   t_name_deferred_guard_release_survives_renumbering
+  t_manifest_joins_stamped_panes
   t_resolve_sanitizes
   t_resolve_walks_suffixes
   t_resolve_empty_fails
