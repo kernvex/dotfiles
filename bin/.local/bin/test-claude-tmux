@@ -225,10 +225,21 @@ resolve() { # <raw> <taken newline-list>
 t_resolve_sanitizes() {
   assert_eq "spaces and punctuation collapse to dashes" "auth-fix" \
     "$(resolve 'auth fix!' '')"
-  assert_eq "dots and colons cannot survive into a tmux target" "v1_2-api" \
+  assert_eq "dots and colons become underscores" "v1_2_api" \
     "$(resolve 'v1.2:api' '')"
   assert_eq "runs of dashes collapse" "a-b" "$(resolve 'a---b' '')"
   assert_eq "edge dashes trim" "x" "$(resolve '--x--' '')"
+  assert_eq "colon in name produces underscore not dash-suffix" "auth_2" \
+    "$(resolve 'auth:2' '')"
+  local out
+  out="$(resolve 'café münchen' '')"
+  assert_eq "non-ASCII letters replaced with dashes" "caf-m-nchen" "$out"
+  # Invariant: output contains only [A-Za-z0-9_-]
+  if [[ "$out" =~ ^[A-Za-z0-9_-]*$ ]]; then
+    ok
+  else
+    fail "output contains only [A-Za-z0-9_-]"; printf '        got: %s\n' "$out"
+  fi
 }
 
 t_resolve_walks_suffixes() {

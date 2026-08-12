@@ -13,10 +13,13 @@
 # Collisions walk -2, -3, … — same convention as tmux-session-here's
 # auto-numbered sibling sessions, never a prompt.
 set -uo pipefail
+# Force C locale so character class [^...] matches bytes, not unicode codepoints,
+# ensuring only ASCII [A-Za-z0-9_-] survive to output (no locale-sensitive letters).
+export LC_ALL=C
 
 sanitize() {
   local name="$1"
-  name="$(printf '%s' "$name" | tr '.:' '_-')"
+  name="$(printf '%s' "$name" | tr '.:' '__')"
   name="${name//[^A-Za-z0-9_-]/-}"
   while [[ $name == *--* ]]; do name="${name//--/-}"; done
   while [[ $name == -* ]]; do name="${name#-}"; done
