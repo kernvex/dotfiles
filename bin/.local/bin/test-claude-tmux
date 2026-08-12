@@ -110,12 +110,72 @@ t_track_bad_json_is_noop() {
     "$(T show -pv -t "$pane" @claude_session 2>/dev/null)"
 }
 
+t_track_trim_behavior() {
+  local pane uuid log_file line_count new_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  pane="$(T display -p -t main '#{pane_id}')"
+  log_file="$SCRATCH/.local/state/claude-tmux/sessions.log"
+
+  # Seed the log with 2500 lines to trigger trimming.
+  mkdir -p "$(dirname "$log_file")"
+  local i
+  for i in $(seq 1 2500); do
+    printf '%d\t%s\t old-uuid-%d\t/tmp/old\tmain:0.0\twindow\n' "$((1000000 + i))" "%0" "$i" >> "$log_file"
+  done
+
+  # Invoke track; should trim the log and append the new line.
+  hook_json "$new_uuid" /tmp/new | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+
+  # Check log was trimmed: line count should be ~1001 (1000 kept + 1 new).
+  line_count="$(wc -l < "$log_file" 2>/dev/null || echo 0)"
+  if [ "$line_count" -le 1100 ] && [ "$line_count" -ge 1000 ]; then
+    ok
+  else
+    fail "trim behavior: line count after trim"; printf '        want ~1001 lines, got %d\n' "$line_count"
+  fi
+
+  # Check the last line is the new entry with the new UUID.
+  local last_line
+  last_line="$(tail -1 "$log_file")"
+  local uuid_in_log="$(printf '%s' "$last_line" | cut -f3)"
+  assert_eq "trim behavior: new line appended after trim" "$new_uuid" "$uuid_in_log"
+}
+
+t_track_fail_open_on_stale_lock() {
+  local pane uuid lock_dir log_file code
+  pane="$(T display -p -t main '#{pane_id}')"
+  uuid="cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa"
+  lock_dir="$SCRATCH/.local/state/claude-tmux/.lock"
+  log_file="$SCRATCH/.local/state/claude-tmux/sessions.log"
+
+  # Pre-create a stale lock (over 30 seconds old) to force fail-open path.
+  mkdir -p "$(dirname "$lock_dir")"
+  mkdir "$lock_dir"
+  touch -t 202601010000 "$lock_dir"  # Set to Jan 1, 2026 00:00
+
+  # Invoke track; should fail to acquire lock but still append (fail open) and exit 0.
+  hook_json "$uuid" /tmp/test | SUT_PANE="$pane" sut claude-tmux-track >/dev/null; code=$?
+
+  assert_exit "fail-open exits 0" 0 "$code"
+
+  # Check that the line was still appended despite lock failure.
+  if [ -f "$log_file" ]; then
+    local last_line
+    last_line="$(tail -1 "$log_file" 2>/dev/null)"
+    local uuid_in_log="$(printf '%s' "$last_line" | cut -f3 2>/dev/null)"
+    assert_eq "fail-open: line appended despite stale lock" "$uuid" "$uuid_in_log"
+  else
+    fail "fail-open: log file not created"
+  fi
+}
+
 main() {
   setup
   trap teardown EXIT
   t_track_stamps_pane_and_log
   t_track_no_tmux_is_noop
   t_track_bad_json_is_noop
+  t_track_trim_behavior
+  t_track_fail_open_on_stale_lock
   printf '%d passed, %d failed\n' "$PASS" "$FAIL"
   [ "$FAIL" -eq 0 ]
 }

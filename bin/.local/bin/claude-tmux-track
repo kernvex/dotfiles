@@ -14,7 +14,34 @@ set -u
 
 STATE="$HOME/.local/state/claude-tmux"
 LOG="$STATE/sessions.log"
+LOCK="$STATE/.lock"
 mkdir -p "$STATE" 2>/dev/null || exit 0
+
+acquire_lock() {
+  local retries=0
+  # Try up to 5 times with ~50ms sleeps to acquire the lock.
+  while [ $retries -lt 5 ]; do
+    if mkdir "$LOCK" 2>/dev/null; then
+      return 0  # Success
+    fi
+    # Check if lock is stale (>30s old); if so, remove and retry immediately.
+    if [ -d "$LOCK" ]; then
+      local lock_age
+      lock_age="$(($(date +%s) - $(stat -f%m "$LOCK" 2>/dev/null || echo 0)))"
+      if [ "${lock_age:-0}" -gt 30 ]; then
+        rmdir "$LOCK" 2>/dev/null
+        continue
+      fi
+    fi
+    sleep 0.05
+    retries=$((retries + 1))
+  done
+  return 1  # Failed to acquire
+}
+
+release_lock() {
+  rmdir "$LOCK" 2>/dev/null || true
+}
 
 main() {
   [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || return 0
@@ -39,14 +66,24 @@ print(d.get("session_id", ""), d.get("cwd", ""), sep="\t")' 2>/dev/null) || true
   meta="$(tmux display -p -t "$TMUX_PANE" \
     "#{session_name}:#{window_index}.#{pane_index}$(printf '\t')#{window_name}" \
     2>/dev/null)" || return 0
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$TMUX_PANE" "$sid" "${cwd:-}" "$meta" \
-    >> "$LOG" 2>/dev/null
 
-  # Opportunistic trim: let the log double its budget, then keep the tail.
-  local n
-  n="$(wc -l < "$LOG" 2>/dev/null || echo 0)"
-  if [ "${n:-0}" -gt 2000 ]; then
-    tail -1000 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+  # Append with atomic trimming: acquire lock, append, trim if needed, release lock.
+  # On lock contention, fail open: append anyway without trimming.
+  if acquire_lock; then
+    trap "release_lock" RETURN
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$TMUX_PANE" "$sid" "${cwd:-}" "$meta" \
+      >> "$LOG" 2>/dev/null
+
+    # Opportunistic trim: let the log double its budget, then keep the tail.
+    local n
+    n="$(wc -l < "$LOG" 2>/dev/null || echo 0)"
+    if [ "${n:-0}" -gt 2000 ]; then
+      tail -1000 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+    fi
+  else
+    # Fail open: append without trimming if lock acquisition fails.
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$TMUX_PANE" "$sid" "${cwd:-}" "$meta" \
+      >> "$LOG" 2>/dev/null
   fi
   return 0
 }
