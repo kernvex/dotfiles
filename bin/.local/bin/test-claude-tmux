@@ -594,6 +594,36 @@ typed_line() { # <pane> — last non-empty line of the pane's visible content
   T capture-pane -p -t "$1" | grep -v '^$' | tail -1
 }
 
+# A pane restored by resurrect carries no @claude_session: pane options die
+# with the server that held them. Tests below that exercise the disk rungs
+# unset it after stamping, or they would silently be testing rung 0 instead.
+restored_pane() { T set -p -u -t "$1" @claude_session; }
+
+t_revive_prefers_pane_option() {
+  local pane live="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" code
+  local stale="00000000-1111-2222-3333-444444444444"
+  T new-window -t main -n livestamp -c "$SCRATCH" bash
+  sleep 0.3
+  pane="$(T display -p -t main:livestamp '#{pane_id}')"
+  hook_json "$live" "$SCRATCH" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
+  sut claude-tmux-manifest
+  # Point every disk rung at a different session: only rung 0 can yield $live.
+  sed "s/$live/$stale/g" "$SCRATCH/.local/state/claude-tmux/manifest.tsv" \
+    > "$SCRATCH/mf.new" && mv "$SCRATCH/mf.new" \
+    "$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  sed "s/$live/$stale/g" "$SCRATCH/.local/state/claude-tmux/sessions.log" \
+    > "$SCRATCH/lg.new" && mv "$SCRATCH/lg.new" \
+    "$SCRATCH/.local/state/claude-tmux/sessions.log"
+  sut claude-tmux-revive "$pane"; code=$?
+  assert_exit "pane-option rung exits 0" 0 "$code"
+  sleep 0.3
+  case "$(typed_line "$pane")" in
+    *"claude --resume $live") ok;;
+    *) fail "live pane option outranks the disk rungs"; \
+       printf '        got: %s\n' "$(typed_line "$pane")";;
+  esac
+}
+
 t_revive_types_manifest_uuid() {
   local pane uuid="12121212-3434-5656-7878-909090909090" code
   T new-window -t main -n revme -c "$SCRATCH" bash
@@ -601,6 +631,7 @@ t_revive_types_manifest_uuid() {
   pane="$(T display -p -t main:revme '#{pane_id}')"
   hook_json "$uuid" "$SCRATCH" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
   sut claude-tmux-manifest
+  restored_pane "$pane"
   sut claude-tmux-revive "$pane"; code=$?
   assert_exit "revive exits 0 on manifest hit" 0 "$code"
   sleep 0.3
@@ -629,6 +660,7 @@ t_revive_falls_back_to_cwd() {
   pane="$(T display -p -t main:cwdfall '#{pane_id}')"
   hook_json "$uuid" "$SCRATCH/projC" | SUT_PANE="$pane" sut claude-tmux-track >/dev/null
   rm -f "$SCRATCH/.local/state/claude-tmux/manifest.tsv"
+  restored_pane "$pane"
   sut claude-tmux-revive "$pane"; code=$?
   assert_exit "cwd fallback exits 0" 0 "$code"
   sleep 0.3
@@ -646,7 +678,12 @@ t_revive_nothing_recorded() {
   rm -f "$SCRATCH/.local/state/claude-tmux/manifest.tsv" \
         "$SCRATCH/.local/state/claude-tmux/sessions.log"
   sut claude-tmux-revive "$pane"; code=$?
-  assert_exit "nothing recorded exits 1" 1 "$code"
+  # Exit 0, not 1: run-shell reports a nonzero child as "'<cmd>' returned N"
+  # on the message line — over the very guidance this rung exists to deliver.
+  # The message IS the outcome, so the rung must not fail the process.
+  assert_exit "nothing recorded exits 0" 0 "$code"
+  assert_eq "guidance message reaches the user" "yes" \
+    "$(T show-messages | grep -q 'no session recorded' && echo yes || echo no)"
   assert_eq "nothing typed when nothing recorded" "" \
     "$(typed_line "$pane" | grep 'claude --resume' || true)"
 }
@@ -674,6 +711,7 @@ main() {
   t_resolve_sanitizes
   t_resolve_walks_suffixes
   t_resolve_empty_fails
+  t_revive_prefers_pane_option
   t_revive_types_manifest_uuid
   t_revive_guards_live_claude
   t_revive_falls_back_to_cwd

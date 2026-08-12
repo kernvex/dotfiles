@@ -3,11 +3,21 @@
 # pane held. Bound to prefix+r.
 #
 # Resolution ladder (spec: no silent failure at any rung):
+#   0. the pane's own @claude_session option — the Claude exited but this tmux
+#      server did not, so the stamp the hook left is still on the pane. Keyed
+#      to pane identity and re-stamped on every start/resume, so it outranks
+#      both disk rungs: coordinates can be renumbered and a cwd can host many
+#      sessions, but this is the session that ran HERE, most recently.
 #   1. manifest.tsv row for this pane's coordinates — exact: written at the
-#      same autosave the restored layout came from.
+#      same autosave the restored layout came from. This is the rung that
+#      carries a server death, where rung 0's options died with the server.
 #   2. newest sessions.log entry for this pane's cwd — the session started
 #      after the last autosave; probably right, says so out loud.
 #   3. a hint at claude --resume's own picker.
+#
+# Every rung ends in exit 0: the status is read only by run-shell, which paints
+# "'<cmd>' returned N" over the message line on failure and so would hide the
+# rung's own diagnosis. Exit 2 (no pane argument) is a caller bug, not a rung.
 #
 # The command is TYPED at the prompt, not executed: visible, cancellable with
 # Ctrl-C, in shell history once run. The user presses Enter to launch.
@@ -33,19 +43,28 @@ TAB="$(printf '\t')"
 IFS="$TAB" read -r sess win pidx cwd < <(tmux display -p -t "$pane" \
   "#{session_name}${TAB}#{window_index}${TAB}#{pane_index}${TAB}#{pane_current_path}")
 
-uuid="$(awk -F'\t' -v s="$sess" -v w="$win" -v p="$pidx" \
-  '$1==s && $2==w && $3==p { print $5; exit }' "$MF" 2>/dev/null || true)"
+# -q: an unset user option is not an error, just an empty answer.
+uuid="$(tmux show -pqv -t "$pane" @claude_session 2>/dev/null || true)"
+
+if [ -z "$uuid" ]; then
+  uuid="$(awk -F'\t' -v s="$sess" -v w="$win" -v p="$pidx" \
+    '$1==s && $2==w && $3==p { print $5; exit }' "$MF" 2>/dev/null || true)"
+fi
 
 if [ -z "$uuid" ]; then
   # Last matching line wins: the log is append-only, so last = newest.
   uuid="$(awk -F'\t' -v c="$cwd" '$4==c { u=$3 } END { if (u) print u }' \
     "$LOG" 2>/dev/null || true)"
-  [ -n "$uuid" ] && msg "no manifest row — matched by cwd (session newer than last autosave)"
+  [ -n "$uuid" ] && msg "no pane stamp or manifest row — matched by cwd (session newer than last autosave)"
 fi
 
 if [ -z "$uuid" ]; then
   msg "no session recorded for this pane — try: claude --resume"
-  exit 1
+  # Exit 0, not 1. run-shell overwrites the message line with its own
+  # "'<cmd>' returned 1" whenever the child fails, erasing the hint the user
+  # actually needs. Nothing consumes this status but tmux, and the delivered
+  # message is the successful outcome of the last rung — not a failure.
+  exit 0
 fi
 
 tmux send-keys -t "$pane" -l "claude --resume $uuid"
