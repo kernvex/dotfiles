@@ -423,14 +423,34 @@ t_automatic_rename_format_evaluates_correctly() {
   assert_eq "hostname title renders the static label" "Claude" \
     "$(T display -p -t "$pane" "$fmt")"
 
-  # (b) title is fish's preexec text for the claude command ("claude <pwd>"):
+  # (b) title is fish's preexec text for the claude command, "~" path shape:
   # same static-label fallback, not the raw preexec text.
   T select-pane -t "$pane" -T "claude ~/k/dotfiles"
-  assert_eq "fish preexec title renders the static label" "Claude" \
+  assert_eq "fish preexec title (~ path) renders the static label" "Claude" \
     "$(T display -p -t "$pane" "$fmt")"
 
-  # (c) a real conversation-summary title: spinner glyph + trailing space
-  # stripped, the rest rendered as-is.
+  # (b2) same shape, absolute-path form.
+  T select-pane -t "$pane" -T "claude /tmp/x"
+  assert_eq "fish preexec title (/ path) renders the static label" "Claude" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # (b3) round-2 regression check: a GENUINE conversation summary that
+  # happens to start with "claude " must NOT be swallowed by the preexec
+  # guard — this repo's own transcripts are full of titles shaped exactly
+  # like this. First prove the round-1 guard (a bare "claude *" glob) really
+  # did over-match this title, standalone; then prove the shipped,
+  # path-anchored guard does not.
+  T select-pane -t "$pane" -T "claude code hooks research"
+  local round1_guard
+  round1_guard='#{||:#{==:#{pane_title},#{host}},#{m:claude *,#{pane_title}}}'
+  assert_eq "round-1 guard over-matched a genuine summary (regression evidence)" \
+    "1" "$(T display -p -t "$pane" "$round1_guard")"
+  assert_eq "shipped format renders the summary, not the placeholder" \
+    "claude code hooks resear" \
+    "$(T display -p -t "$pane" "$fmt")"
+
+  # (c) a real conversation-summary title with a spinner glyph: glyph +
+  # trailing space stripped, the rest rendered as-is.
   T select-pane -t "$pane" -T "◐ Fix the thing"
   assert_eq "summary title is stripped of its spinner glyph" "Fix the thing" \
     "$(T display -p -t "$pane" "$fmt")"
