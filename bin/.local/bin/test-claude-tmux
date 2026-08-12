@@ -389,6 +389,21 @@ t_name_deferred_guard_release_survives_renumbering() {
   T set -g renumber-windows off
 }
 
+t_rename_hook_fires_harness() {
+  # The production wiring: after-rename-window → claude-tmux-name. Set the
+  # hook on the scratch server exactly as .tmux.conf sets it, but pointing at
+  # the repo copy under test with the scratch environment.
+  T set-hook -g after-rename-window \
+    "run-shell -b \"HOME='$SCRATCH' PATH='$SHIM:$PATH' '$HERE/claude-tmux-name' --from-hook '#{session_name}:#{window_index}'\""
+  local pane
+  pane="$(new_claude_window hookwin)"
+  T rename-window -t main:hookwin hooked
+  sleep 3
+  assert_eq "prefix+, alone pushes the title" "hooked" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+  T set-hook -gu after-rename-window
+}
+
 # ---------------------------------------------------------------------------
 # claude-tmux-manifest
 # ---------------------------------------------------------------------------
@@ -592,6 +607,7 @@ main() {
   t_track_kicks_push_for_named_window
   t_name_repush_does_not_self_collide
   t_name_deferred_guard_release_survives_renumbering
+  t_rename_hook_fires_harness
   t_manifest_joins_stamped_panes
   t_manifest_fails_on_tmux_error
   t_manifest_sanitizes_tab_in_cwd

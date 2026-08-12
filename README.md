@@ -75,6 +75,7 @@ already-running Claude processes need a restart to pick up the environment.
 | `bind -n C-f` (root table) | A fish binding only fires at a fish prompt. Root-table means tmux intercepts Ctrl-f ahead of the TUI, so the sessionizer jump works from inside Claude. vim/`less`/`man`/`fzf` still get it passed through. |
 | `bind F` → `tmux-session-here` | Second/third session for the *same* directory (`dotfiles-review`, `dotfiles-2`), for running more than one Claude conversation on one repo. Siblings show up in the Ctrl-f picker as `[TMUX] …`. |
 | `bind A` → `<project>-ask` | The common case of the above: a `claude --permission-mode plan` sidecar. Read-only, so you can ask it something while another agent is mid-edit without racing it or breaking its flow. One per project — press again to return to it. |
+| `prefix r` → revive / `prefix R` → reload | After a restore, `r` types `claude --resume <exact-uuid>` for the conversation this pane held (manifest → cwd-match → picker hint). Reload moved to `R`. |
 
 Rationale in [`docs/adr/0004-tmux-tuned-for-claude-code.md`](docs/adr/0004-tmux-tuned-for-claude-code.md).
 
