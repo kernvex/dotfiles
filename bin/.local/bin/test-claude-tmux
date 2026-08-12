@@ -186,11 +186,13 @@ t_track_fail_open_on_held_lock() {
 
   assert_exit "fail-open exits 0" 0 "$code"
 
-  # Assert bounded acquisition: should complete in <2s (5 retries * ~50ms each = ~250ms max).
-  if [ "$elapsed" -lt 2000 ]; then
+  # Assert bounded acquisition: budget is 40 retries * ~50ms = ~2s hard cap.
+  # Allow a margin (budget + 1s) for scheduling/tmux-call overhead so the
+  # assertion pins the cap without being flaky on a loaded machine.
+  if [ "$elapsed" -lt 3000 ]; then
     ok
   else
-    fail "fail-open: bounded acquisition"; printf '        invocation took %d ms, want <2000ms\n' "$elapsed"
+    fail "fail-open: bounded acquisition"; printf '        invocation took %d ms, want <3000ms\n' "$elapsed"
   fi
 
   # Check that the line was still appended despite lock contention (fail open).
