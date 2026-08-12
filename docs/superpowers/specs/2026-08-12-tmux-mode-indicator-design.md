@@ -1,6 +1,6 @@
 # tmux mode indicator: COPY / VISUAL / SEARCH pills
 
-**Date:** 2026-08-10
+**Date:** 2026-08-12
 **Status:** Approved
 
 ## Problem
@@ -35,12 +35,18 @@ The first pill names the mode; SEARCH is an additive second pill.
 - Gate on `#{==:#{pane_mode},copy-mode}`, not `#{pane_in_mode}` — the
   latter is also true in choose-tree and view-mode, where a COPY pill
   would lie.
-- `VISUAL` replaces `COPY` while `#{selection_present}` is on (after `v`
-  or a mouse drag).
+- `VISUAL` replaces `COPY` while `#{selection_active}` is on — live from
+  the instant `v` (or a mouse drag) starts the selection. Not
+  `selection_present`: that only flips once the selection is non-empty,
+  which would lag the pill one keystroke behind the mode (measured on
+  tmux 3.7c).
 - `SEARCH` appears while `#{search_present}` is on: search results are
   active in the pane. It cannot mean "typing the query" — during `/` and
   `?` tmux replaces the status line with its own prompt. The flag is
-  copy-mode state, so leaving copy mode clears it.
+  copy-mode state, so leaving copy mode clears it. Starting a selection
+  also drops it (tmux clears the search marks), so VISUAL + SEARCH is
+  reached by searching *during* a selection; the pills just report the
+  flags honestly.
 
 ## Appearance
 
@@ -76,9 +82,9 @@ Constraints inherited from the persistence spec hold untouched:
 The live server is never restarted. Two tiers:
 
 - **Format truth (scratch socket):** on `tmux -L` with a throwaway
-  session, drive states with `send-keys` (`copy-mode`, `v`, a search via
-  `send-keys -X search-forward`) and assert
-  `tmux display -p '#{pane_mode} #{selection_present} #{search_present}'`
+  session, drive states with `send-keys -X` (`begin-selection`,
+  `search-backward`, `cancel`) and assert
+  `tmux display -p '#{pane_mode} #{selection_active} #{search_present}'`
   flips as the table above requires, and that
   `tmux display -p '#{T:status-left}'` renders the expected pill text in
   each state.
