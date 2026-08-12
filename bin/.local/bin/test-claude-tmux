@@ -155,11 +155,21 @@ t_track_concurrent_trim_no_data_loss() {
 }
 
 t_track_fail_open_on_held_lock() {
-  local pane uuid lock_dir log_file code start_time end_time elapsed
+  local pane uuid lock_dir log_file code start_time end_time elapsed line_count
   pane="$(T display -p -t main '#{pane_id}')"
   uuid="dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb"
   lock_dir="$SCRATCH/.local/state/claude-tmux/.lock"
   log_file="$SCRATCH/.local/state/claude-tmux/sessions.log"
+  mkdir -p "$(dirname "$log_file")"
+
+  # Clear and re-seed the log above the 2000-line trim threshold (2100 lines).
+  # This ensures we can verify that NO TRIM occurred on the fail-open path.
+  : > "$log_file"  # Truncate log file
+  local i
+  for i in $(seq 1 2100); do
+    printf '%d\tpane-id\told-uuid-%04d\t/tmp/old\tmain:0.0\twindow\n' "$((1000000 + i))" "$i" >> "$log_file"
+  done
+
   mkdir -p "$(dirname "$lock_dir")"
 
   # Start a background process that holds the lock directory for a few seconds.
@@ -189,6 +199,11 @@ t_track_fail_open_on_held_lock() {
     last_line="$(tail -1 "$log_file" 2>/dev/null)"
     local uuid_in_log="$(printf '%s' "$last_line" | cut -f3 2>/dev/null)"
     assert_eq "fail-open: line appended despite held lock" "$uuid" "$uuid_in_log"
+
+    # Critical: assert NO TRIM occurred on the fail-open path.
+    # Log should be exactly 2101 lines (2100 seed + 1 append), not trimmed to ~1000.
+    line_count="$(wc -l < "$log_file" 2>/dev/null | tr -d ' ' || echo 0)"
+    assert_eq "fail-open: no trim on fail-open path" 2101 "$line_count"
   else
     fail "fail-open: log file not created"
   fi
