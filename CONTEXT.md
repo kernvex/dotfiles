@@ -71,7 +71,7 @@ details, no decisions (those live in `docs/adr/`).
   whose history a commit there lands in. Distinct from the directory the worktree
   sits in, which is scaffolding and may be anywhere on disk.
 
-## Session terms
+## Sessionizer terms
 
 - **Search path** — a root directory the sessionizer walks to gather candidates,
   descending a fixed number of levels rather than to the bottom of the tree. The
@@ -90,6 +90,40 @@ details, no decisions (those live in `docs/adr/`).
   walked directory itself, or, for a live session, the directory that session works
   in. What the picker means by a candidate regardless of how the line reads, so that
   jumping to one and copying one are the same question answered twice.
+
+## Conversation terms
+
+- **Conversation** — one Claude Code session: the transcript a pane is attached
+  to, brought back by `claude --resume`. Called a *conversation* here and never a
+  session, because a session in this repo is already a tmux session (above), and
+  the two differ in the way that matters most — a tmux session dies with its
+  server, a conversation does not.
+
+- **Conversation id** — Claude's own identifier for a conversation, read from the
+  SessionStart hook's `session_id` and stamped onto its pane as
+  `@claude_session`. A resume reuses it, which makes it the only name for a
+  conversation that survives a restart, and therefore the only safe answer to
+  "is this record mine?".
+
+- **Pane id** — tmux's `%N`. Unique only within one tmux server: a restored
+  layout comes up under a new server that re-issues ids from `%0`, so a pane id
+  written in a previous life belongs to nobody. Identifies a slot for as long as
+  the server lives, never a conversation.
+
+- **Handle** — the one name worn by both a tmux window and the conversation
+  inside it: what `prefix+,` sets, what the window pill shows, and what is pushed
+  into Claude as `/rename`. One name in two places, kept equal.
+
+- **Conversation map** — the append-only record joining a conversation id to the
+  pane, directory and handle it was last seen under, kept on disk as
+  `sessions.log`. Rewritten on every start and resume, so it heals itself rather
+  than having to be right in advance.
+
+- **Taken handle** — a handle already spoken for in a directory: a live window's
+  name, or one held in the conversation map by a conversation other than this
+  one. A dead pane does not release a handle, because that conversation is still
+  resumable under the name it was given. Only a window's *own* past is forgiven,
+  matched by conversation id; everything else collides and walks to `-2`.
 
 ## Window navigation terms
 
