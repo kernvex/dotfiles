@@ -42,14 +42,28 @@ function fish_greeting
 end
 
 # Prefer Homebrew CLI tools from setup.sh. Use `command cat`, `command ls`, `command grep`, `command find`, etc. for originals.
-command -v nvim >/dev/null; and alias vim nvim
-command -v eza >/dev/null; and alias ls eza
-command -v bat >/dev/null; and alias cat 'bat --paging=never'
-command -v rg >/dev/null; and alias grep rg
-command -v rg >/dev/null; and alias egrep rg
-command -v rg >/dev/null; and alias fgrep 'rg -F'
-# fd is installed as `fd`; it is not a POSIX find replacement (different flags). Use `command find` for find(1) syntax.
-command -v lazygit >/dev/null; and alias lg lazygit
+#
+# Interactive shells ONLY. These replacements are typing conveniences for a
+# human at a prompt, and every one of them changes the output or the flags of
+# the tool whose name it takes. config.fish is sourced for `fish -c` too, so
+# without this guard the substitution reaches every script and every tool that
+# shells out through fish — which do not expect it and cannot see it.
+#
+# That is not hypothetical: tmux-resurrect repaints a restored pane by running
+# `cat '<contents>'; exec fish` through default-shell, so `cat` became `bat`
+# and every recovered window came back wearing line numbers, a filename header
+# and box-drawing rules. bat prints plain when piped, so this stays invisible
+# until something gives it a tty — which a restored pane does.
+if status is-interactive
+  command -v nvim >/dev/null; and alias vim nvim
+  command -v eza >/dev/null; and alias ls eza
+  command -v bat >/dev/null; and alias cat 'bat --paging=never'
+  command -v rg >/dev/null; and alias grep rg
+  command -v rg >/dev/null; and alias egrep rg
+  command -v rg >/dev/null; and alias fgrep 'rg -F'
+  # fd is installed as `fd`; it is not a POSIX find replacement (different flags). Use `command find` for find(1) syntax.
+  command -v lazygit >/dev/null; and alias lg lazygit
+end
 
 # `o <url>` opens a link in the Chrome profile that THIS DIRECTORY belongs to, so
 # a link opened from inside a client's folder lands in that client's browser
