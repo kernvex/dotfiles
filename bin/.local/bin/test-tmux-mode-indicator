@@ -29,10 +29,16 @@ T -f "$CONF" new-session -d -s modes -x 80 -y 24 \
 # Wired at all? A missing conf edit would otherwise fail every case with an
 # unhelpfully empty render.
 case "$(T show -gv status-left)" in
-  *VISUAL*COPY*SEARCH*) ;;
+  *PREFIX*VISUAL*COPY*SEARCH*) ;;
   *) echo "status-left carries no pill segments — is the conf edit in place?"
      exit 1 ;;
 esac
+
+# PREFIX can only be asserted statically: client_prefix needs an attached
+# client holding the prefix key, which a headless scratch server never has.
+# The rendered cases below prove its absence; the lit pill is eyeballed live.
+T show -gv status-left | grep -q 'client_prefix.*@thm_red.* PREFIX ' \
+  || { echo "PREFIX pill is not wired to client_prefix on @thm_red"; exit 1; }
 
 # The theme lands via TPM's run-shell, which can finish after new-session
 # returns; the hex assertions below need @thm_* populated.
@@ -69,11 +75,11 @@ expect() { # <description> <got>, then pairs: has|not <needle>
 }
 
 expect "live pane shows no pill" "$(left)" \
-  not COPY not VISUAL not SEARCH
+  not COPY not VISUAL not SEARCH not PREFIX
 
 T copy-mode -t "$PANE"
 expect "copy-mode shows COPY on sky" "$(left)" \
-  has COPY has "$SKY" not VISUAL not "$MAUVE" not SEARCH
+  has COPY has "$SKY" not VISUAL not "$MAUVE" not SEARCH not PREFIX
 
 x begin-selection
 expect "VISUAL replaces COPY the instant a selection starts" "$(left)" \
@@ -91,7 +97,7 @@ expect "searching during a selection: VISUAL + SEARCH" "$(left)" \
 
 x cancel
 expect "cancel clears every pill" "$(left)" \
-  not COPY not VISUAL not SEARCH
+  not COPY not VISUAL not SEARCH not PREFIX
 
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

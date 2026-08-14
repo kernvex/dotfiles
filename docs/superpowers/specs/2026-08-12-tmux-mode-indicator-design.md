@@ -91,6 +91,16 @@ The live server is never restarted. Two tiers:
 - **Live eyeball:** after `bind r` re-source, enter copy mode, select,
   search — three pills, three colours, gone on `q`.
 
+> **Amendment (2026-08-14).** A fourth pill: `PREFIX` on `@thm_red`,
+> leftmost, lit by `#{client_prefix}` in *any* state — not gated on
+> copy-mode. It is per-client, so it lights on the screen whose keyboard
+> is armed. Padding scheme, applied to all pills: the label is padded
+> inside its caps, each pill carries one trailing space, and the gap at
+> the bar's left edge is its own segment lit when any pill is — every gap
+> stays single-width whatever combination is up. PREFIX is asserted
+> statically in the scratch test (a headless server has no client to hold
+> the prefix) and eyeballed live.
+
 ## Out of scope
 
 - Indicators for other modes (choose-tree, client, view-mode)
