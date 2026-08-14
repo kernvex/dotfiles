@@ -80,16 +80,37 @@ taken_names() { # <cwd> <own-window-id> — live windows on this cwd + our recor
       -F "#{window_id}$(printf '\t')#{pane_current_path}$(printf '\t')#{window_name}" | sort -u)
   # Names we previously pushed for this cwd (titles have no greppable store —
   # spec fallback: our own records are the source of truth for pushed names).
-  # Exclude the target window's own pane ids (log column 2): claude-tmux-
-  # track always logs-then-kicks, so the window being (re-)named has just
-  # logged its OWN current name a moment earlier under that cwd — without
-  # this filter that self-record collides with itself and every re-push
-  # walks the name to its own "-2", forever.
-  local own_panes
+  # Exclude the target window's own records, by two keys:
+  #
+  #   pane id (log column 2) — claude-tmux-track always logs-then-kicks, so
+  #     the window being (re-)named has just logged its OWN current name a
+  #     moment earlier under that cwd. Without this the self-record collides
+  #     with itself and every re-push walks the name to its own "-2", forever.
+  #
+  #   session uuid (log column 3) — pane ids do NOT survive the tmux server.
+  #     A restored layout comes up under a new server that re-issues them from
+  #     %0, so every record this window wrote in its previous life carries a
+  #     pane id that is not, and can never again be, this window's. Keyed on
+  #     pane id alone the exclusion fails at exactly the moment persistence is
+  #     doing its job: the window is handed back its conversation and then
+  #     collides with its own former name ("SSID" -> "SSID-2" on every crash).
+  #     The uuid is the identity that outlives the server — the conversation
+  #     resumes under the same id and track re-stamps it onto the new pane
+  #     (spec: the map self-heals on every start and resume). Matching on it
+  #     forgives only this window's own past; a dead pane id belonging to some
+  #     OTHER conversation still counts as taken, because that conversation is
+  #     still resumable under the handle it was given.
+  local own_panes own_uuids
   own_panes="$(tmux list-panes -t "$2" -F '#{pane_id}' 2>/dev/null)"
-  awk -F'\t' -v c="$1" -v panes="$own_panes" '
-    BEGIN { n = split(panes, p, "\n"); for (i = 1; i <= n; i++) own[p[i]] = 1 }
-    $4 == c && !($2 in own) { print $6 }
+  own_uuids="$(tmux list-panes -t "$2" -F '#{@claude_session}' 2>/dev/null)"
+  awk -F'\t' -v c="$1" -v panes="$own_panes" -v uuids="$own_uuids" '
+    BEGIN {
+      n = split(panes, p, "\n"); for (i = 1; i <= n; i++) if (p[i] != "") own[p[i]] = 1
+      # An unstamped pane yields an empty field; it must not match the empty
+      # string and forgive every malformed record in the log.
+      m = split(uuids, u, "\n"); for (i = 1; i <= m; i++) if (u[i] != "") mine[u[i]] = 1
+    }
+    $4 == c && !($2 in own) && !($3 in mine) { print $6 }
   ' "$STATE/sessions.log" 2>/dev/null | sort -u
 }
 

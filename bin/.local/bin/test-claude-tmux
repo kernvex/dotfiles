@@ -356,6 +356,54 @@ t_name_repush_does_not_self_collide() {
     "$(T display -p -t "$pane" '#{pane_title}')"
 }
 
+t_name_survives_a_server_restart() {
+  local pane code log uuid="79bae4b0-be21-4bd4-b6ea-616256f2b8ad"
+  log="$SCRATCH/.local/state/claude-tmux/sessions.log"
+  mkdir -p "$SCRATCH/.local/state/claude-tmux"
+  pane="$(new_claude_window revived)"
+  T rename-window -t main:revived ssid
+  # The record this window wrote in a PREVIOUS life, before the server died.
+  # A restored layout comes up under a NEW tmux server, which re-issues pane
+  # ids from %0 — so the pane id in that record is not, and can never again
+  # be, this window's. Excluding "self" by pane id therefore stops working at
+  # exactly the moment persistence is supposed to be doing its job, and the
+  # window collides with its own former name. The uuid is what survives: the
+  # conversation resumes under the same id, and track re-stamps it here.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "%999" "$uuid" \
+    "$SCRATCH" "main:0.0" ssid >> "$log"
+  T set -p -t "$pane" @claude_session "$uuid"
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:ssid"; code=$?
+  assert_exit "delivery after a server restart exits 0" 0 "$code"
+  sleep 1
+  assert_eq "window keeps its name across a server restart" "ssid" \
+    "$(T display -p -t "$pane" '#{window_name}')"
+  assert_eq "title keeps its name across a server restart" "ssid" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
+t_name_foreign_dead_record_still_taken() {
+  local pane code log
+  log="$SCRATCH/.local/state/claude-tmux/sessions.log"
+  mkdir -p "$SCRATCH/.local/state/claude-tmux"
+  pane="$(new_claude_window fresh)"
+  T rename-window -t main:fresh ghost
+  # The boundary the fix above must not cross. This record is also for a dead
+  # pane in this cwd, but it belongs to a DIFFERENT conversation: that window
+  # is gone, yet the conversation is still resumable under the handle "ghost".
+  # Only records carrying THIS window's own uuid may be forgiven — a dead
+  # pane id on its own proves nothing about whose name it was.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "%998" \
+    "11111111-2222-3333-4444-555555555555" "$SCRATCH" "main:0.0" ghost >> "$log"
+  T set -p -t "$pane" @claude_session "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  SUT_PANE="$pane" sut claude-tmux-name --from-hook "main:ghost"; code=$?
+  assert_exit "delivery against a foreign dead record exits 0" 0 "$code"
+  sleep 1
+  assert_eq "another conversation's dead record still counts as taken" "ghost-2" \
+    "$(T display -p -t "$pane" '#{window_name}')"
+  assert_eq "title matches the suffixed name" "ghost-2" \
+    "$(T display -p -t "$pane" '#{pane_title}')"
+}
+
 t_name_deferred_guard_release_survives_renumbering() {
   local pane wid idx code sut_pid
   # This repo's real tmux.conf ships `renumber-windows on`; the scratch
@@ -702,6 +750,8 @@ main() {
   t_name_unconfirmed_rename_fails
   t_track_kicks_push_for_named_window
   t_name_repush_does_not_self_collide
+  t_name_survives_a_server_restart
+  t_name_foreign_dead_record_still_taken
   t_name_deferred_guard_release_survives_renumbering
   t_rename_hook_fires_harness
   t_automatic_rename_format_evaluates_correctly
