@@ -120,6 +120,13 @@ return {
   initial_cols = 150,
   initial_rows = 50,
 
+  -- Font-size keys must not resize the window. WezTerm's default is to hold the
+  -- grid at initial_cols x initial_rows and grow the window to fit the new cell
+  -- size, so CMD+= visibly moved the frame around the screen. False inverts that:
+  -- the window stays put and the row/col count changes, which is what CMD+= does
+  -- in a browser and what the muscle memory expects.
+  adjust_window_size_when_changing_font_size = false,
+
   keys = {
     -- This will create a new split and run your default program inside it
     {
