@@ -21,12 +21,31 @@ session. That argument holds for *navigation* and does not extend to *scrollback
 Neovim and other alternate-screen programs are scrolled by their own keys; a program
 that renders inline on the normal screen — Claude Code, a plain shell — has no scroll
 of its own, so with `mouse off` the wheel does nothing at all and reading back over a
-long transcript means entering copy mode for every glance. `mouse on` is therefore
-adopted for the wheel, and the navigation discipline is kept by habit rather than by
-removing the capability. The cost is that a drag now selects into a tmux buffer instead
-of the terminal's, so `MouseDragEnd1Pane` is bound to `copy-pipe-and-cancel pbcopy` to
-make selections reach the macOS clipboard anyway (holding Option in WezTerm still gets
-a native selection).
+long transcript means entering copy mode for every glance. `mouse on` was therefore
+adopted for the wheel, with the navigation discipline kept by habit rather than by removing
+the capability, and `MouseDragEnd1Pane` bound to `copy-pipe-and-cancel pbcopy` so that a drag
+still reached the macOS clipboard rather than only a tmux buffer (holding Option in WezTerm
+always got a native selection).
+
+**Reversed on 2026-08-11: the mouse is off.** The scrollback argument above still stands and
+is not what changed. With the mouse on, *every* gesture in a plain pane — wheel, drag-select,
+double- and triple-click — enters copy mode, and tmux 3.7's copy-mode entry could abort the
+entire server under macOS 26's system allocator (upstream tmux#5302 and #5385; the stack
+bottoms out in `window_copy_clone_screen` by way of `grid_free_line`). Four crashes in one
+day, each with the mouse in hand, each taking every session on the machine down with it.
+
+The response is two layers rather than one. tmux here is a local jemalloc-linked 3.7c build,
+which addresses the allocator itself; and `mouse off`, which removes the trigger surface
+entirely so that no gesture can enter copy mode at all. A 48-hour watch over the jemalloc
+build closed clean — 11,375 samples on a single server pid, 91 copy-mode entries survived, no
+new crash reports — so the first layer is believed sufficient on its own. The second is kept
+anyway, because the measured cost of keeping it is small.
+
+That cost, accepted knowingly: Claude Code nags that the wheel does nothing, scrollback is
+keyboard-only through prefix `[`, and text selection is WezTerm-native again instead of
+landing in a tmux buffer. If the mouse is ever restored, the `MouseDragEnd1Pane` binding must
+come back with it — it is in the config's git history — and the line-number gutter of ADR 0011
+will not appear in copy mode entered by wheel.
 
 **Ctrl-f.** The sessionizer was bound in two places, and both had a hole. The fish
 binding only fires at a fish prompt, so inside any full-screen TUI the keystroke goes to
