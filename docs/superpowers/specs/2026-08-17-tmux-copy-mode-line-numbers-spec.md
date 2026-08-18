@@ -240,3 +240,28 @@ left out; revisit if they start appearing in commit messages and issue titles.
 binding), unsurprising to a reader who finds the config comment, and the genuine
 trade-offs are recorded above and in that comment. It fails all three of the
 tests for wanting an ADR.
+
+## Amendment, 2026-08-17 (during implementation)
+
+Two things this spec asserts were found to be wrong while building it. Recorded here rather
+than edited into the text above, so that what was believed at design time stays legible.
+
+**The version guard became a capability probe.** The spec specified a comparison on
+`#{version}` and noted in Further Notes that it "orders 3.10 below 3.7" but answers correctly
+today. Measured during review, `#{>=:3.10,3.7}` is `0`: the comparison is numeric, so a future
+tmux 3.10 would not merely mis-sort, it would silently drop the whole block. The guard now asks
+whether the option exists instead, which is the real question and cannot be broken by a
+renumbering.
+
+**The command-prompt round trip is no longer untestable.** The spec declared it so, with the
+reason, and asked the test file to say the same. That was true only of a *single* headless
+server. A second tmux server whose pane attaches to the first gives the server under test a
+real client, and the keystroke can then be driven and asserted end to end — and the outer
+capture is also the only place the rendered gutter can be read, since it is drawn over the
+mode's screen and never reaches the inner pane's grid. Both are now covered, so the test file
+declares nothing untestable.
+
+One deliberate addition beyond the enumerated testing list: a case that moves the cursor off
+the top row and checks the line under it against independently fetched content. It replaced an
+assertion that compared `copy_position + copy_cursor_y` to the target while `copy_cursor_y` was
+known to be zero, which could not fail.

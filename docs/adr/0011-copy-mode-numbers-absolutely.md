@@ -37,9 +37,12 @@ config comment; anyone changing one must change the other.
 history grows — seven columns against the 200k limit in use here. Content is shifted right by
 that width and clipped at the right edge rather than rewrapped. Both are paid only while copy
 mode renders, and a live pane is untouched, which is precisely why the feature needs no toggle
-and has none. All of it is 3.7 or newer, so the block is version-guarded: an unrecognised
-option is a load-time error, and an older tmux on another machine should lose this one feature
-rather than its whole config.
+and has none. All of it is 3.7 or newer, and an unrecognised option is a load-time
+error, so an older tmux on another machine must lose this one feature rather than its whole
+config. The guard probes for the option rather than comparing versions: `#{>=:}` compares
+numerically, so `#{>=:3.10,3.7}` is false and a version test would silently drop the block on
+tmux 3.10. "Does this tmux have the option" is both the real question and immune to how
+releases are numbered.
 
 Two things deliberately were *not* done, recorded so they are not done later. The position
 indicator needed no change: with the cursor at the view top, the number it reports describes
@@ -48,11 +51,14 @@ dissolved on that measurement. And no sub-state toggle was built; showing the gu
 during a search would change its width mid-session and shift the text sideways while it is
 being read.
 
-One link is unverified. Whether `command-prompt` carries a two-command template could not be
-established headlessly: driving that prompt needs an attached client, and sending keys while
-it is open blocks tmux's command queue. Every step downstream of it was measured against a
-live server. If it misbehaves, the fallback is the `run-shell` with an explicit pane id that
-the scroll-resume binding already uses for the same reason.
+The keystroke itself is verified, which it nearly was not. Whether `command-prompt` carries a
+two-command template cannot be established on a headless server — driving that prompt needs an
+attached client, and sending keys while it is open blocks tmux's command queue rather than
+typing into it. The way through is a second tmux server whose pane attaches to the first, which
+gives the server under test a client that genuinely exists; typing `:42` that way lands the
+cursor on line 42 at row 0. The same outer capture is the only place the gutter can be READ,
+since it is painted over the mode's screen and never reaches the inner pane's grid. The
+`run-shell` fallback that the scroll-resume binding uses turned out not to be needed.
 
 Finally, tmux keeps line numbers off when copy mode is entered with the mouse. That carve-out
 is inert here — ADR 0004 records the mouse as off — but it goes live the moment the mouse
