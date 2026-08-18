@@ -208,9 +208,13 @@ t_track_fail_open_on_held_lock() {
 
   mkdir -p "$(dirname "$lock_dir")"
 
-  # Start a background process that holds the lock directory for a few seconds.
-  # This is a FRESH lock (mtime = now), so stale-breaker cannot clear it.
-  (mkdir "$lock_dir" 2>/dev/null && sleep 3) &
+  # Hold the lock for the whole test. Note what actually does the holding: the
+  # DIRECTORY, which this subshell creates and never removes. The sleep only
+  # keeps a pid alive for the kill at the end — so the lock cannot be released
+  # mid-run and the fail-open path is guaranteed, not raced. It is a FRESH lock
+  # (mtime = now) and the loop below finishes in ~3s, far inside the 30s stale
+  # threshold, so the stale-breaker cannot clear it either.
+  (mkdir "$lock_dir" 2>/dev/null && sleep 30) &
   local holder_pid=$!
   sleep 0.1  # Ensure lock is held before we try to acquire
 
@@ -222,13 +226,22 @@ t_track_fail_open_on_held_lock() {
 
   assert_exit "fail-open exits 0" 0 "$code"
 
-  # Assert bounded acquisition: budget is 40 retries * ~50ms = ~2s hard cap.
-  # Allow a margin (budget + 1s) for scheduling/tmux-call overhead so the
-  # assertion pins the cap without being flaky on a loaded machine.
-  if [ "$elapsed" -lt 3000 ]; then
+  # Assert bounded acquisition. The old bound here was <3000ms, derived from
+  # "40 retries * 50ms = ~2s, plus 1s of slack" — and that arithmetic is wrong,
+  # which is why this went red. The sleep is less than half the cost of a retry:
+  # each one also spawns `stat` and `date`, two processes, ~27ms more. Measured
+  # against a permanently held lock the loop gives up in 3088-3260ms, so the old
+  # bound sat BELOW the code's best case and could only pass when something
+  # stopped the lock from being held at all.
+  #
+  # 6000ms is set from the real number with room for a loaded machine, and it
+  # still catches the thing this test exists for: an UNBOUNDED wait would sit
+  # here until the 30s stale-breaker fired, an order of magnitude away. If this
+  # ever needs raising again, measure the loop rather than adding a second.
+  if [ "$elapsed" -lt 6000 ]; then
     ok
   else
-    fail "fail-open: bounded acquisition"; printf '        invocation took %d ms, want <3000ms\n' "$elapsed"
+    fail "fail-open: bounded acquisition"; printf '        invocation took %d ms, want <6000ms\n' "$elapsed"
   fi
 
   # Check that the line was still appended despite lock contention (fail open).
