@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# Tests for copy-mode line numbers and the `:` that lands on the line.
+#
+#   ./test-tmux-copy-mode-lines     exit 0 = pass
+#
+# Two scratch tmux servers, both on private sockets, both sourcing this
+# checkout's tmux.conf:
+#
+#   1. INNER alone, driven with `send-keys -X`, for the commands the `:`
+#      binding issues. Fast, and enough for everything except the keystroke.
+#   2. INNER attached from a pane of OUTER, which is the only way to get a real
+#      client onto it. A command-prompt needs one — `send-keys` to a pane while
+#      the prompt is open blocks tmux's command queue instead of typing into it —
+#      so the actual `:42<CR>` round trip, and the RENDERED gutter, are asserted
+#      through the outer pane's capture. The gutter is drawn over the mode's
+#      screen and never reaches the inner pane's grid, so outer capture is the
+#      only place it is visible at all.
+#
+# EXIT STATUS IS ASSERTED, not just output — same lesson test-tmux-open-url and
+# test-claude-tmux record in their headers.
+#
+# On restating config: the theme colours and the `:` binding are read back out
+# of the running server rather than copied here. The option VALUES this file
+# does name (`absolute`, `bold`) are the assertion itself and cannot be read
+# from anywhere without asserting nothing.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONF="$HERE/../../../tmux/.tmux.conf"
+[ -f "$CONF" ] || { echo "cannot find tmux.conf at $CONF"; exit 1; }
+
+IN=copy-lines-inner
+OUT=copy-lines-outer
+T()  { tmux -L "$IN" "$@"; }
+TO() { tmux -L "$OUT" "$@"; }
+trap 'T kill-server 2>/dev/null; TO kill-server 2>/dev/null' EXIT
+
+LINES=200
+T -f "$CONF" new-session -d -s in -x 80 -y 24 \
+  "for i in \$(seq 1 $LINES); do echo \"content-line-\$i\"; done; exec sleep 600" \
+  || { echo "could not start scratch server"; exit 1; }
+
+PANE="in:1.0"   # base-index 1
+
+# The theme lands via TPM's run-shell, which can finish after new-session
+# returns; the colour assertions below need @thm_* populated.
+for _ in $(seq 50); do
+  [ -n "$(T show -gv @thm_peach 2>/dev/null)" ] && break
+  sleep 0.2
+done
+PEACH="$(T show -gv @thm_peach)"
+OVERLAY="$(T show -gv @thm_overlay_1)"
+[ -n "$PEACH" ] && [ -n "$OVERLAY" ] \
+  || { echo "theme never loaded — @thm_* empty"; exit 1; }
+
+# Wait for the history to SETTLE, not merely to pass a threshold: every
+# absolute-line coordinate below is derived from history_size, so reading it
+# mid-fill would silently skew each one.
+prev=-1
+for _ in $(seq 100); do
+  now="$(T display -p -t "$PANE" '#{history_size}')"
+  [ "$now" = "$prev" ] && [ "$now" -gt 0 ] && break
+  prev="$now"; sleep 0.2
+done
+HSIZE="$(T display -p -t "$PANE" '#{history_size}')"
+[ "$HSIZE" -gt 0 ] || { echo "history never filled"; exit 1; }
+# From here HSIZE is only evidence the fill finished; line_text re-reads it.
+
+# Wired at all? Without this a tmux predating the feature reports a wall of
+# opaque failures instead of the one fact that explains them.
+case "$(T show -gwv copy-mode-line-numbers 2>/dev/null)" in
+  absolute) ;;
+  *) echo "copy-mode-line-numbers is not absolute — is the conf edit in place,"
+     echo "and does this tmux ($(T display -p '#{version}')) have the option?"
+     exit 1 ;;
+esac
+
+PASS=0
+FAIL=0
+ok()   { PASS=$((PASS + 1)); }
+fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+
+assert_eq() { # <desc> <want> <got>
+  if [ "$2" = "$3" ]; then ok; else
+    fail "$1"; printf '        want: %s\n        got:  %s\n' "$2" "$3"
+  fi
+}
+assert_ne() { # <desc> <unwanted> <got>
+  if [ "$2" != "$3" ]; then ok; else
+    fail "$1"; printf '        expected anything but: %s\n' "$2"
+  fi
+}
+assert_exit() { # <desc> <want> <got>
+  if [ "$2" = "$3" ]; then ok; else
+    fail "$1"; printf '        want exit: %s\n        got exit:  %s\n' "$2" "$3"
+  fi
+}
+assert_contains() { # <desc> <needle> <haystack>
+  case "$3" in *"$2"*) ok ;; *)
+    fail "$1"; printf '        wanted to contain: %s\n        got: %s\n' "$2" "$3" ;;
+  esac
+}
+
+fmt()  { T display -p -t "$PANE" "$1"; }
+x()    { T send-keys -t "$PANE" -X "$@"; }
+recopy() { x cancel 2>/dev/null; T copy-mode -t "$PANE"; }
+
+# The text of an absolute line, fetched WITHOUT copy mode. capture-pane counts
+# from the top of the visible screen, so absolute line N (1-based, 1 = oldest
+# line in the history) sits at N - 1 - history_size.
+#
+# history_size is re-read on every call rather than cached, because attaching
+# the outer client below RESIZES this session to the client's pane, and a taller
+# pane pulls lines out of the history onto the screen — which moves every
+# absolute coordinate. A cached size was silently four lines out after attach.
+line_text() { # <absolute-line>
+  local hsize coord
+  hsize="$(T display -p -t "$PANE" '#{history_size}')"
+  coord=$(( $1 - 1 - hsize ))
+  T capture-pane -p -t "$PANE" -S "$coord" -E "$coord"
+}
+
+TARGET=30
+
+# --- static: options and binding, read back off the running server ----------
+
+assert_eq "numbering is absolute, not the drifting default" \
+  "absolute" "$(T show -gwv copy-mode-line-numbers)"
+assert_eq "gutter style resolves to the theme's recessive overlay" \
+  "fg=$OVERLAY" "$(fmt '#{T:copy-mode-line-number-style}')"
+assert_eq "current-line style resolves to the theme's peach accent" \
+  "fg=$PEACH,bold" "$(fmt '#{T:copy-mode-current-line-number-style}')"
+
+COLON="$(T list-keys -T copy-mode-vi | grep -E '^bind-key +-T copy-mode-vi +: ')"
+assert_contains "\`:\` still jumps" "goto-line" "$COLON"
+assert_contains "\`:\` also lands the cursor on the line" "top-line" "$COLON"
+
+# --- behavioural: the two commands the binding issues -----------------------
+
+WANT="$(line_text "$TARGET")"
+
+recopy
+x goto-line "$TARGET"; code=$?
+assert_exit "goto-line exits clean" 0 "$code"
+x top-line
+assert_eq "jump then land: cursor sits on the top row" "0" "$(fmt '#{copy_cursor_y}')"
+assert_eq "jump then land: indicator reads the requested line" \
+  "$TARGET" "$(fmt '#{copy_position}')"
+assert_eq "jump then land: the cursor is on the line that number names" \
+  "$WANT" "$(fmt '#{copy_cursor_line}')"
+
+# The coordinate model itself: the line under the cursor is indicator + row,
+# whatever the row is. Asserted with the cursor moved OFF the top row so it
+# cannot pass by arithmetic on a row known to be zero.
+DOWN=5
+recopy
+x goto-line "$TARGET"
+x top-line
+x -N "$DOWN" cursor-down
+assert_eq "cursor row moved off the top" "$DOWN" "$(fmt '#{copy_cursor_y}')"
+assert_eq "line under the cursor is indicator + row, by content" \
+  "$(line_text $((TARGET + DOWN)))" "$(fmt '#{copy_cursor_line}')"
+assert_eq "the view did not scroll when the cursor moved inside it" \
+  "$TARGET" "$(fmt '#{copy_position}')"
+
+# Regression evidence: goto-line ALONE moves the view and strands the cursor.
+# This is the bug the rebind exists to fix; the day it stops being true, the
+# rebind is redundant and this file should be the thing that says so.
+recopy
+x goto-line "$TARGET"
+assert_ne "goto-line alone does NOT put the cursor on the top row" \
+  "0" "$(fmt '#{copy_cursor_y}')"
+assert_ne "goto-line alone does NOT put the cursor on the target line" \
+  "$WANT" "$(fmt '#{copy_cursor_line}')"
+
+# A number past the end clamps to the bottom rather than erroring. Scrolled to
+# the very top FIRST — a freshly entered copy mode already reports
+# scroll_position 0, so asserting 0 from there would pass without the jump
+# having done anything at all.
+recopy
+x goto-line 1
+x top-line
+assert_ne "precondition: parked away from the bottom" "0" "$(fmt '#{scroll_position}')"
+x goto-line 999999; code=$?
+assert_exit "an out-of-range line does not error" 0 "$code"
+x top-line
+assert_eq "an out-of-range line clamps to the end of the buffer" \
+  "0" "$(fmt '#{scroll_position}')"
+x cancel
+
+# --- the real keystroke, and the rendered gutter ----------------------------
+# Everything above drives the commands directly. This drives the KEY, through a
+# client that genuinely exists, which is the only way the command-prompt half of
+# the binding is exercised at all.
+
+TO new-session -d -s out -x 100 -y 30 "tmux -L $IN attach -t in" \
+  || { echo "could not start the outer server"; exit 1; }
+for _ in $(seq 50); do
+  [ "$(T list-clients 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ] && break
+  sleep 0.2
+done
+assert_ne "an outer client actually attached" "0" \
+  "$(T list-clients 2>/dev/null | wc -l | tr -d ' ')"
+
+JUMP=42
+T copy-mode -t "$PANE"; sleep 0.4
+TO send-keys -t out ':'; sleep 0.5
+TO send-keys -t out "$JUMP"; sleep 0.3
+TO send-keys -t out Enter; sleep 0.7
+
+assert_eq "typing \`:$JUMP\` lands the cursor on that line" \
+  "$(line_text "$JUMP")" "$(fmt '#{copy_cursor_line}')"
+assert_eq "typing \`:$JUMP\` leaves the cursor on the top row" \
+  "0" "$(fmt '#{copy_cursor_y}')"
+
+# The gutter is painted over the mode's screen and never lands in the inner
+# pane's grid, so the outer capture is the only place it can be seen.
+RENDER="$(TO capture-pane -p -t out | sed -n '1p')"
+assert_contains "the gutter renders the absolute number" "$JUMP" "$RENDER"
+assert_contains "the gutter renders it beside its own line" \
+  "$JUMP $(line_text "$JUMP")" "$RENDER"
+
+printf '%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]
