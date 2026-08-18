@@ -261,6 +261,14 @@ capture is also the only place the rendered gutter can be read, since it is draw
 mode's screen and never reaches the inner pane's grid. Both are now covered, so the test file
 declares nothing untestable.
 
+**The current line is rosewater, not peach.** Implementation Decisions above named peach, and
+that contradicted user story 18 in this same spec: peach is already the Claude window pill, so
+it would have been a second meaning for a colour that has one. Review caught the contradiction
+and the choice was reversed. Rosewater is spent nowhere else in the config, and it is the
+strongest contrast in the palette at 12.9:1 on base — against the gutter's own 4.4:1, which is
+what makes the current line unmistakable among the dim numbers around it. Teal read better on
+paper at 11:1 but sits close to sky, the copy-mode pill that is on screen at the same moment.
+
 One deliberate addition beyond the enumerated testing list: a case that moves the cursor off
 the top row and checks the line under it against independently fetched content. It replaced an
 assertion that compared `copy_position + copy_cursor_y` to the target while `copy_cursor_y` was

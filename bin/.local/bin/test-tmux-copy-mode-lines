@@ -45,12 +45,12 @@ PANE="in:1.0"   # base-index 1
 # The theme lands via TPM's run-shell, which can finish after new-session
 # returns; the colour assertions below need @thm_* populated.
 for _ in $(seq 50); do
-  [ -n "$(T show -gv @thm_peach 2>/dev/null)" ] && break
+  [ -n "$(T show -gv @thm_rosewater 2>/dev/null)" ] && break
   sleep 0.2
 done
-PEACH="$(T show -gv @thm_peach)"
+ROSEWATER="$(T show -gv @thm_rosewater)"
 OVERLAY="$(T show -gv @thm_overlay_1)"
-[ -n "$PEACH" ] && [ -n "$OVERLAY" ] \
+[ -n "$ROSEWATER" ] && [ -n "$OVERLAY" ] \
   || { echo "theme never loaded — @thm_* empty"; exit 1; }
 
 # Wait for the history to SETTLE, not merely to pass a threshold: every
@@ -128,8 +128,8 @@ assert_eq "numbering is absolute, not the drifting default" \
   "absolute" "$(T show -gwv copy-mode-line-numbers)"
 assert_eq "gutter style resolves to the theme's recessive overlay" \
   "fg=$OVERLAY" "$(fmt '#{T:copy-mode-line-number-style}')"
-assert_eq "current-line style resolves to the theme's peach accent" \
-  "fg=$PEACH,bold" "$(fmt '#{T:copy-mode-current-line-number-style}')"
+assert_eq "current-line style resolves to the theme's unspent rosewater" \
+  "fg=$ROSEWATER,bold" "$(fmt '#{T:copy-mode-current-line-number-style}')"
 
 COLON="$(T list-keys -T copy-mode-vi | grep -E '^bind-key +-T copy-mode-vi +: ')"
 assert_contains "\`:\` still jumps" "goto-line" "$COLON"
