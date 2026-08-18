@@ -273,3 +273,26 @@ One deliberate addition beyond the enumerated testing list: a case that moves th
 the top row and checks the line under it against independently fetched content. It replaced an
 assertion that compared `copy_position + copy_cursor_y` to the target while `copy_cursor_y` was
 known to be zero, which could not fail.
+
+## Amendment, 2026-08-18 (after using it)
+
+**Numbering reversed to bottom-anchored.** This spec chose `absolute` and argued the case at
+length, and the argument held on its own terms — those numbers do not drift. What it never
+weighed was the interaction with the `history-limit 200000` set a few lines above it in the same
+config: absolute counts from the OLDEST line, so in practice every line worth reading was six
+digits and reaching recent output meant typing `:198420`. Stable and unusable.
+
+`default` numbering is bottom-anchored: the newest end is 0 and the count grows backwards into
+history, putting the lines actually revisited under `:100`. Its cost is the drift this spec
+originally rejected it for, now accepted deliberately — a number is good while you read and
+stale after the next turn of output, which is how the jump is used.
+
+Two consequences worth recording. Within the last screenful the numbers descend to 0 and climb
+back, so two lines there can share a number; harmless, because that region is on screen anyway.
+And an out-of-range number clamps to the OLDEST line rather than the newest, since counting
+backwards makes a large number a request for deep history — the opposite end from before.
+
+The rebind, the guard, the styles and every test but the coordinate arithmetic were untouched by
+this. That is the coupling ADR 0011 warned about, arriving on schedule: one option changed, and
+the test's coordinates inverted and the out-of-range case flipped direction, with nothing in
+tmux to catch either.

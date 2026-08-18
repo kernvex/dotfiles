@@ -1,4 +1,4 @@
-# Copy mode numbers absolutely, and `:` moves the cursor rather than the view
+# Copy mode numbers from the newest line, and `:` moves the cursor rather than the view
 
 tmux 3.7 can draw a line-number gutter in copy mode, and `:` has always been bound to
 `goto-line`, so "jump to line 20" looks like it needs no decision at all. Both defaults are
@@ -6,7 +6,27 @@ wrong for the job in ways that only surface under measurement, and the two corre
 coupled to each other — which is the reason this is written down rather than left to the
 comment beside it.
 
-**Numbering is absolute, not the default mode.** The name suggests a neutral choice and it is
+**Numbering is bottom-anchored (`default`), reversed on 2026-08-18 from the `absolute` this
+ADR originally chose.** The argument below is kept because it was not wrong, only outweighed.
+Absolute numbering counts from the OLDEST line in the buffer, and against the 200k history this
+config sets, that put every line worth reading at six digits: reaching recent output meant
+typing `:198420`. The numbers were perfectly stable and perfectly unusable. Bottom-anchored
+numbering makes the newest end 0 and counts backwards into history, so the lines actually
+revisited sit under `:100`.
+
+The price is exactly the one the original argument named: these numbers are relative to an end
+that moves, so the buffer renumbers whenever the pane prints. That is now accepted rather than
+refused — a number is good while you are reading and stale after the next turn of output, which
+matches how the jump is used. Two smaller costs come with it. Within the last screenful the
+numbers run down to 0 and back up, so two lines there can share a number; harmless, because that
+region is already on screen. And an out-of-range number now clamps to the OLDEST line rather
+than the newest, since counting backwards means a large number is a request for deep history.
+
+The reversal also demonstrated the coupling claimed three paragraphs down, which is worth more
+than the paragraph itself: changing one option inverted the test's coordinate arithmetic and
+flipped the direction of the out-of-range case. Nothing in tmux would have caught either.
+
+**Originally: numbering is absolute, not the default mode.** The name suggests a neutral choice and it is
 not one. Default numbering labels each row with its distance from the current scroll offset,
 measured off the pane bottom, so every line the pane prints renumbers the whole buffer
 underneath the reader; a number noted during one turn of a Claude transcript means a different
@@ -27,10 +47,10 @@ puts the cursor on row 0, which under absolute numbering is the requested line. 
 finds `:` rebound will reasonably assume the stock binding was fine and revert it. It is not,
 and this paragraph is the answer.
 
-**The two halves are one decision.** `top-line` lands on line N *because* the numbering is
-absolute — row 0 is line N in that mode and in no other. Switch the numbering back to the
-default and the binding keeps working, keeps looking correct, and silently arrives somewhere
-else. Nothing in tmux couples the option to the binding, so the coupling lives here and in the
+**The two halves are one decision.** `top-line` lands on the line numbered N *because* of how
+the mode numbers — row 0 carries that number in this mode and not in another. Switch the mode
+and the binding keeps working, keeps looking correct, and silently arrives somewhere else. The
+2026-08-18 reversal above is the worked example. Nothing in tmux couples the option to the binding, so the coupling lives here and in the
 config comment; anyone changing one must change the other.
 
 **Consequences.** The gutter is `digits(history) + 1` columns wide and grows as a pane's

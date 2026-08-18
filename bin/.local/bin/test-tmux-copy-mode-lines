@@ -69,8 +69,8 @@ HSIZE="$(T display -p -t "$PANE" '#{history_size}')"
 # Wired at all? Without this a tmux predating the feature reports a wall of
 # opaque failures instead of the one fact that explains them.
 case "$(T show -gwv copy-mode-line-numbers 2>/dev/null)" in
-  absolute) ;;
-  *) echo "copy-mode-line-numbers is not absolute — is the conf edit in place,"
+  default) ;;
+  *) echo "copy-mode-line-numbers is not default — is the conf edit in place,"
      echo "and does this tmux ($(T display -p '#{version}')) have the option?"
      exit 1 ;;
 esac
@@ -105,27 +105,22 @@ fmt()  { T display -p -t "$PANE" "$1"; }
 x()    { T send-keys -t "$PANE" -X "$@"; }
 recopy() { x cancel 2>/dev/null; T copy-mode -t "$PANE"; }
 
-# The text of an absolute line, fetched WITHOUT copy mode. capture-pane counts
-# from the top of the visible screen, so absolute line N (1-based, 1 = oldest
-# line in the history) sits at N - 1 - history_size.
-#
-# history_size is re-read on every call rather than cached, because attaching
-# the outer client below RESIZES this session to the client's pane, and a taller
-# pane pulls lines out of the history onto the screen — which moves every
-# absolute coordinate. A cached size was silently four lines out after attach.
-line_text() { # <absolute-line>
-  local hsize coord
-  hsize="$(T display -p -t "$PANE" '#{history_size}')"
-  coord=$(( $1 - 1 - hsize ))
-  T capture-pane -p -t "$PANE" -S "$coord" -E "$coord"
+# The text of the line this mode numbers N, fetched WITHOUT copy mode.
+# Numbering is bottom-anchored, and capture-pane also counts backwards from the
+# visible screen, so the two agree directly: line N is at coordinate -N. No
+# history_size in the arithmetic at all, which is what makes this immune to the
+# outer client's attach RESIZING the session below — a taller pane pulls lines
+# out of history and moves every history-relative coordinate.
+line_text() { # <line-number-as-this-mode-counts>
+  T capture-pane -p -t "$PANE" -S "-$1" -E "-$1"
 }
 
 TARGET=30
 
 # --- static: options and binding, read back off the running server ----------
 
-assert_eq "numbering is absolute, not the drifting default" \
-  "absolute" "$(T show -gwv copy-mode-line-numbers)"
+assert_eq "numbering is bottom-anchored, so recent lines get small numbers" \
+  "default" "$(T show -gwv copy-mode-line-numbers)"
 assert_eq "gutter style resolves to the theme's recessive overlay" \
   "fg=$OVERLAY" "$(fmt '#{T:copy-mode-line-number-style}')"
 assert_eq "current-line style resolves to the theme's unspent rosewater" \
@@ -158,8 +153,8 @@ x goto-line "$TARGET"
 x top-line
 x -N "$DOWN" cursor-down
 assert_eq "cursor row moved off the top" "$DOWN" "$(fmt '#{copy_cursor_y}')"
-assert_eq "line under the cursor is indicator + row, by content" \
-  "$(line_text $((TARGET + DOWN)))" "$(fmt '#{copy_cursor_line}')"
+assert_eq "line under the cursor is indicator minus row, by content" \
+  "$(line_text $((TARGET - DOWN)))" "$(fmt '#{copy_cursor_line}')"
 assert_eq "the view did not scroll when the cursor moved inside it" \
   "$TARGET" "$(fmt '#{copy_position}')"
 
@@ -177,15 +172,16 @@ assert_ne "goto-line alone does NOT put the cursor on the target line" \
 # the very top FIRST — a freshly entered copy mode already reports
 # scroll_position 0, so asserting 0 from there would pass without the jump
 # having done anything at all.
+# Bottom-anchored numbering counts BACKWARDS, so an out-of-range number is a
+# request for something older than the buffer holds and clamps to the oldest
+# line — the opposite end from where absolute numbering would have put it.
 recopy
-x goto-line 1
-x top-line
-assert_ne "precondition: parked away from the bottom" "0" "$(fmt '#{scroll_position}')"
+x goto-line 0
+assert_eq "precondition: parked at the newest end" "0" "$(fmt '#{scroll_position}')"
 x goto-line 999999; code=$?
 assert_exit "an out-of-range line does not error" 0 "$code"
-x top-line
-assert_eq "an out-of-range line clamps to the end of the buffer" \
-  "0" "$(fmt '#{scroll_position}')"
+assert_eq "an out-of-range line clamps to the oldest line held" \
+  "$(fmt '#{history_size}')" "$(fmt '#{scroll_position}')"
 x cancel
 
 # --- the real keystroke, and the rendered gutter ----------------------------
