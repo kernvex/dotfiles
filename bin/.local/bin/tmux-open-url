@@ -9,9 +9,14 @@
 # `run-shell` does not, and a picker bound that way silently does nothing. The
 # same lesson is already recorded against `bind f` in .tmux.conf.
 #
-# THE PANE ID IS AN ARGUMENT, and has to be. Inside a popup $TMUX_PANE names the
-# POPUP, not the pane you were reading, so a capture that trusted the environment
-# would faithfully scrape an empty box and report no links.
+# THE PANE ID IS AN ARGUMENT, and has to be. Inside a popup $TMUX_PANE is not set
+# at all, and `tmux display-message -p '#{pane_id}'` asked from in there answers
+# for whichever session the server touched last — measured, and on a machine with
+# several sessions open that is reliably the wrong one, without saying so.
+#
+# It also cannot be handed over by `display-popup` alone: that command does not
+# expand `#{...}` in its shell-command, so the binding routes through `run-shell`,
+# which does. See the note above `bind u` in .tmux.conf.
 #
 # Routing is by directory, so this works only alongside the private `identity`
 # repo. Without it the link still opens — see open_link — because a link opener
@@ -75,6 +80,15 @@ open_link() { # <url> <dir>
   fi
 }
 
+# Hold the popup open long enough for a message to be read. Without it the popup
+# closes the instant it opens and nothing is ever seen, which is indistinguishable
+# from the key doing nothing.
+#
+# `|| true` because a `read` that reaches EOF — no tty, stdin closed, a test
+# harness — returns non-zero, and under `set -e` that would kill the script on the
+# line whose entire job is to keep it alive.
+hold() { read -r -n 1 -s -p "press any key" || true; }
+
 copy_link() { # <url>
   if command -v pbcopy >/dev/null 2>&1; then printf '%s' "$1" | pbcopy
   else tmux set-buffer -- "$1"; fi
@@ -89,17 +103,22 @@ pane="${1:-}"
 
 # -J joins wrapped lines, so a URL broken across the pane width survives as one
 # string. No -e: escape sequences would otherwise land in the middle of a match.
-urls="$(tmux capture-pane -p -J -S "-$DEPTH" -t "$pane" | extract)"
+#
+# THE CAPTURE IS CHECKED, because this is the step that failed silently for the
+# whole first life of this feature. `set -e` turns any failure here into an
+# instant exit, and inside a popup an instant exit is invisible: the box opens
+# and shuts, and pressing the key reads as the key being broken. Whatever goes
+# wrong, it says so and waits to be read.
+if ! raw="$(tmux capture-pane -p -J -S "-$DEPTH" -t "$pane" 2>&1)"; then
+  printf 'cannot read pane %s\n%s\n' "$pane" "$raw"
+  hold
+  exit 1
+fi
+urls="$(printf '%s\n' "$raw" | extract)"
 
 if [ -z "$urls" ]; then
   echo "no links in the last $DEPTH lines of this pane"
-  # Without this the popup closes the instant it opens and the message is never
-  # seen, which reads as the key doing nothing at all.
-  #
-  # `|| true` because a `read` that reaches EOF — no tty, stdin closed, a test
-  # harness — returns non-zero, and under `set -e` that would kill the script on
-  # the line whose entire job is to keep it alive.
-  read -r -n 1 -s -p "press any key" || true
+  hold
   exit 0
 fi
 
@@ -109,10 +128,25 @@ dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
 
 # --expect makes fzf print the key that closed it on the first line, so one
 # picker serves both verbs.
+#
+# THE EXIT STATUS IS TRIAGED rather than blanket-ignored. A bare `|| exit 0` here
+# reads "the user pressed Escape" into every possible failure, including fzf
+# being absent or erroring — and a popup that exits 0 for that is the same blink
+# as before, with the same absence of explanation. 130 is Escape or C-c and 1 is
+# an empty selection: both are the user declining, and both leave quietly.
+set +e
 selection="$(printf '%s\n' "$urls" \
   | fzf --expect=ctrl-y --reverse --height=100% \
         --prompt='open > ' \
-        --header='enter opens in this folder'"'"'s browser · ctrl-y copies')" || exit 0
+        --header='enter opens in this folder'"'"'s browser · ctrl-y copies')"
+picked=$?
+set -e
+case "$picked" in
+  0)     ;;
+  1|130) exit 0 ;;
+  127)   echo "fzf is not installed, so there is nothing to pick with"; hold; exit 1 ;;
+  *)     printf 'the picker failed (exit %s)\n' "$picked"; hold; exit 1 ;;
+esac
 
 key="$(printf '%s\n' "$selection" | sed -n '1p')"
 url="$(printf '%s\n' "$selection" | sed -n '2p')"
