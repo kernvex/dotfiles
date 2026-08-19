@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# End-to-end tests for the pickers, with the REAL fzf, driven headlessly.
+#
+#   ./test-tmux-pickers-e2e     exit 0 = pass
+#
+# WHY THIS EXISTS: every other test here stubs fzf, so the interactive path — the
+# one the key actually runs — had never once been executed by a test. That is how
+# this feature stayed green through three separate failures that a person found
+# by pressing a key. A stubbed picker proves the plumbing around the picker; it
+# proves nothing about the picker.
+#
+# HEADLESS, ON ITS OWN SOCKET, ALWAYS. The pickers are driven inside a scratch
+# tmux WINDOW rather than a popup, because a pane has a tty (so fzf really
+# renders) and can be typed into with send-keys and read with capture-pane. A
+# popup can do neither. Nothing here ever touches a server anyone is using — the
+# earlier habit of testing against the live session was a defect in the tests,
+# not a shortcut.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+command -v fzf >/dev/null 2>&1 || { echo "SKIP: no fzf, which is the point of this file"; exit 0; }
+
+SOCK="pickers-e2e-$$-$RANDOM"
+T() { tmux -L "$SOCK" "$@"; }
+WORK="$(mktemp -d)"
+cleanup() { T kill-server 2>/dev/null; chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"; }
+trap cleanup EXIT
+
+PASS=0
+FAIL=0
+ok()  { PASS=$((PASS + 1)); }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "$2"; }
+
+# PHYSICAL paths throughout: mktemp hands out a path through a symlink (/var is
+# /private/var here) while the scripts record the resolved one, so comparing the
+# two spellings fails while everything actually works.
+mkdir -p "$WORK/fix/src" "$WORK/stubs" "$WORK/tmp"
+FIX="$(cd -P "$WORK/fix" && pwd)"
+printf '# the notes\n' > "$FIX/notes.md"
+printf 'one\ntwo\nthree\nfour\n' > "$FIX/src/main.ts"
+printf '#!/bin/sh\nsleep 300\n' > "$WORK/stubs/nvim"
+printf '#!/bin/sh\ncat > %s/clipboard\n' "$WORK" > "$WORK/stubs/pbcopy"
+chmod +x "$WORK/stubs/nvim" "$WORK/stubs/pbcopy"
+
+T new-session -d -s s1 -c "$FIX" -x 100 -y 30 "printf 'ERROR in src/main.ts:3\\n'; sleep 900" \
+  || { echo "could not start scratch server"; exit 1; }
+TARGET="$(T list-panes -t s1 -F '#{pane_id}' | head -1)"
+sleep 0.4
+
+until_ok() { local d=$(( $(date +%s) + $1 )); shift
+  while [ "$(date +%s)" -lt "$d" ]; do "$@" && return 0; sleep 0.1; done; return 1; }
+
+# Start a picker in its own window and wait for fzf to actually draw. Typing at a
+# picker that has not rendered yet is a race that fails somewhere else entirely.
+start_picker() { # <script>  -> sets RUN, RC, OUT
+  RC="$WORK/rc"; OUT="$WORK/out"; rm -f "$RC" "$OUT"
+  RUN="$(T new-window -P -F '#{pane_id}' -t s1 -c "$FIX" \
+    "export PATH=$WORK/stubs:\$PATH; export TMPDIR=$WORK/tmp; \
+     export TMUX_OPEN_MD_ROOTS=$WORK/none; \
+     $HERE/$1 $TARGET > $OUT 2>&1; echo \$? > $RC")"
+  until_ok 15 rendered
+}
+rendered() { T capture-pane -p -t "$RUN" 2>/dev/null | grep -q '>'; }
+finished() { [ -s "$RC" ]; }
+shows()    { T capture-pane -p -t "$RUN" 2>/dev/null | grep -q "$1"; }
+opened()   { T list-windows -a -F '#{window_id} #{@edit_file}' \
+               | awk -v f="$1" '{ sp=index($0," "); if (sp && substr($0,sp+1)==f) print $1 }' | head -1; }
+
+# --------------------------------------------------------------------------
+# The markdown picker really draws, and Enter really opens.
+# --------------------------------------------------------------------------
+if start_picker tmux-open-md; then ok
+else bad "the markdown picker renders" "nothing that looks like a prompt appeared: [$(T capture-pane -p -t "$RUN" | head -3 | tr '\n' '|')]"; fi
+
+if shows 'notes.md'; then ok
+else bad "the markdown picker lists the folder's markdown" "pane: [$(T capture-pane -p -t "$RUN" | head -5 | tr '\n' '|')]"; fi
+
+T send-keys -t "$RUN" Enter
+if until_ok 15 finished && [ "$(cat "$RC")" = "0" ]; then ok
+else bad "Enter leaves the markdown picker cleanly" "rc=$(cat "$RC" 2>/dev/null || echo none), out=[$(cat "$OUT" 2>/dev/null)]"; fi
+
+if until_ok 10 test -n "$(opened "$FIX/notes.md")"; then ok
+else bad "Enter opens the chosen markdown file" "windows: [$(T list-windows -a -F '#{window_name}=#{@edit_file}' | tr '\n' '|')]"; fi
+
+# --------------------------------------------------------------------------
+# The path picker: the line number from the pane's text has to survive to here.
+# --------------------------------------------------------------------------
+if start_picker tmux-open-path; then ok
+else bad "the path picker renders" "pane: [$(T capture-pane -p -t "$RUN" | head -3 | tr '\n' '|')]"; fi
+
+if shows 'src/main.ts:3'; then ok
+else bad "the path picker offers the path AND the line from the pane" \
+         "pane: [$(T capture-pane -p -t "$RUN" | head -5 | tr '\n' '|')]"; fi
+
+T send-keys -t "$RUN" Enter
+if until_ok 15 finished && [ "$(cat "$RC")" = "0" ]; then ok
+else bad "Enter leaves the path picker cleanly" "rc=$(cat "$RC" 2>/dev/null || echo none), out=[$(cat "$OUT" 2>/dev/null)]"; fi
+
+if until_ok 10 test -n "$(opened "$FIX/src/main.ts")"; then ok
+else bad "Enter opens the file the pane named" "windows: [$(T list-windows -a -F '#{window_name}=#{@edit_file}' | tr '\n' '|')]"; fi
+
+# --------------------------------------------------------------------------
+# ctrl-y copies rather than opens.
+# --------------------------------------------------------------------------
+rm -f "$WORK/clipboard"
+if start_picker tmux-open-path; then
+  T send-keys -t "$RUN" C-y
+  until_ok 15 finished
+  if [ "$(cat "$WORK/clipboard" 2>/dev/null)" = "$FIX/src/main.ts" ]; then ok
+  else bad "ctrl-y copies the absolute path" "clipboard: [$(cat "$WORK/clipboard" 2>/dev/null)]"; fi
+else
+  bad "ctrl-y copies the absolute path" "the picker never rendered"
+fi
+
+# --------------------------------------------------------------------------
+# Escape is a decision, not a failure: it must leave silently and successfully,
+# or `run-shell` reports an error every time someone changes their mind.
+# --------------------------------------------------------------------------
+if start_picker tmux-open-md; then
+  T send-keys -t "$RUN" Escape
+  if until_ok 15 finished && [ "$(cat "$RC")" = "0" ] && [ ! -s "$OUT" ]; then ok
+  else bad "Escape leaves quietly and successfully" "rc=$(cat "$RC" 2>/dev/null || echo none), out=[$(cat "$OUT" 2>/dev/null)]"; fi
+else
+  bad "Escape leaves quietly and successfully" "the picker never rendered"
+fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]
