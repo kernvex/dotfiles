@@ -19,18 +19,12 @@
 # tmux felt like. The pane is the fix, not an embellishment.)
 set -euo pipefail
 
-# Overridable so the tests can assert WHICH file and WHICH line the editor is
-# asked for without running an editor.
-EDITOR_CMD="${TMUX_EDIT_EDITOR:-nvim}"
-
 die() { printf '%s\n' "$*" >&2; exit 1; }
 
 pane=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -t) shift; [ $# -gt 0 ] || die "-t needs a pane id"; pane="$1"; shift ;;
-    -t=*) pane="${1#-t=}"; shift ;;
-    --) shift; break ;;
     -*) die "tmux-edit: unknown option $1" ;;
     *) break ;;
   esac
@@ -55,11 +49,18 @@ abs="$dir/$base"
 # README.md is not a unique key — and two different files would fight over one
 # window, each renaming it and stealing the other's.
 #
-# The path is the whole of the field after the id, not the second field: a
-# filename may contain spaces, and splitting on whitespace would truncate it.
+# The path is the whole of the line after the first space, taken by SUBSTRING
+# rather than by clearing $1. Clearing a field makes awk rebuild $0 with a single
+# OFS between the rest, so a filename containing two consecutive spaces comes
+# back with one — it then matches nothing, and reuse quietly becomes a second
+# window for a file that is already open.
 existing="$(
   tmux list-windows -a -F '#{window_id} #{@edit_file}' 2>/dev/null \
-    | awk -v want="$abs" '{ id = $1; $1 = ""; sub(/^ /, ""); if ($0 == want) { print id; exit } }'
+    | awk -v want="$abs" '{
+        sp = index($0, " ")
+        if (sp == 0) next
+        if (substr($0, sp + 1) == want) { print substr($0, 1, sp - 1); exit }
+      }'
 )"
 
 if [ -n "$existing" ]; then
@@ -82,9 +83,9 @@ session="$(tmux display-message -p -t "$pane" '#{session_name}')"
 # through sh. printf %q is what makes a filename with spaces in it arrive as one
 # file instead of several.
 if [ -n "$line" ]; then
-  cmd="$(printf '%q +%q -- %q' "$EDITOR_CMD" "$line" "$abs")"
+  cmd="$(printf 'nvim +%q -- %q' "$line" "$abs")"
 else
-  cmd="$(printf '%q -- %q' "$EDITOR_CMD" "$abs")"
+  cmd="$(printf 'nvim -- %q' "$abs")"
 fi
 
 window="$(tmux new-window -P -F '#{window_id}' -t "$session:" -c "$dir" -n "$base" "$cmd")"

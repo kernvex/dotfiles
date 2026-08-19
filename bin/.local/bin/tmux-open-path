@@ -36,10 +36,14 @@ DEPTH=2000
 
 # Tokens: a quoted run, or a bare run that stops at the characters which delimit
 # a path in every context these appear in — whitespace, quotes, brackets, commas.
+#
+# That is also the limit of what can be recognised: a filename CONTAINING one of
+# those delimiters is only reachable when the text quoted it. Names ending in
+# `.` `;` `:` `!` `?` are reachable, via the strip-then-fall-back below.
 TOKEN_RE='"[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]"'"'"'(),<>]+'
 
 extract() { # <base-dir>
-  local base="$1" ln tok path line ctx_line display abs
+  local base="$1" ln tok raw path line ctx_line display abs
   base="$(cd -P "$base" 2>/dev/null && pwd)" || base="$PWD"
 
   # Reversed first, so "most recent" is simply "seen first", and the de-duplication
@@ -71,6 +75,12 @@ extract() { # <base-dir>
           \'*\') tok="${tok#\'}"; tok="${tok%\'}" ;;
         esac
 
+        # Kept as printed, because the fallback below needs something to fall
+        # back TO. Stripping in place left the loop trying the same stripped
+        # value twice, so a file whose name genuinely ends in `)` or `.` was
+        # unreachable while the comment claimed otherwise.
+        raw="$tok"
+
         # Trailing sentence punctuation comes off BEFORE the line number is
         # split out. Compiler output ends the whole thing with a colon —
         # `src/main.ts:42:8: error` — and a line/col pattern anchored on a digit
@@ -89,11 +99,11 @@ extract() { # <base-dir>
 
         [ -n "$tok" ] || continue
 
-        # Try the token with its trailing sentence punctuation removed, then as
-        # it stands. Stripping first is right far more often — a path ending a
-        # sentence collects the stop — but a filename may legitimately end in one
-        # of these, and the existence check is what decides between them.
-        for path in "$(printf '%s' "$tok" | sed 's/[].,;:!?)}'"'"'"]*$//')" "$tok"; do
+        # The stripped form first, then the name exactly as printed. Stripping
+        # is right far more often — a path ending a sentence collects the stop —
+        # but a filename may legitimately end in one of these, and the existence
+        # check is what decides between them rather than a rule.
+        for path in "$tok" "$raw"; do
           [ -n "$path" ] || continue
           case "$path" in
             "~")   continue ;;
@@ -108,8 +118,12 @@ extract() { # <base-dir>
 
           abs="$(cd -P "$(dirname "$abs")" 2>/dev/null && pwd)/$(basename "$abs")" || continue
 
+          # Relative to the pane's directory when it is beneath it, and
+          # ~-shortened otherwise: outside the pane, the home prefix is the part
+          # you already know and the rest is the part you are reading.
           case "$abs" in
             "$base"/*) display="${abs#"$base"/}" ;;
+            "$HOME"/*) display="~/${abs#"$HOME"/}" ;;
             *)         display="$abs" ;;
           esac
           [ -z "$line" ] || display="$display:$line"
@@ -134,8 +148,6 @@ copy_path() { # <path>
   else tmux set-buffer -- "$1"; fi
 }
 
-hold() { read -r -n 1 -s -p "press any key" || true; }
-
 # --------------------------------------------------------------------- main ---
 
 case "${1:-}" in
@@ -149,35 +161,28 @@ esac
 pane="${1:-}"
 [ -n "$pane" ] || { echo "usage: tmux-open-path <pane-id> | --extract <dir>" >&2; exit 2; }
 
-# EMPTY IS THE FAILURE MODE HERE, not a non-zero exit. `display-message` asked
-# about a pane that does not exist answers with exit 0 and an empty string, so a
-# guard testing only the status lets an empty directory through — and an empty
-# directory is not inert: `git -C "" rev-parse` falls back to the CURRENT one, so
-# the picker quietly lists a different repo than the one you pressed the key in.
-# Measured, against the literal `#{pane_id}` an unexpanded binding delivers.
-dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null || true)"
-if [ -z "$dir" ] || [ ! -d "$dir" ]; then
-  printf 'cannot read pane %s\n' "$pane"; hold; exit 1
+# The shared popup plumbing. `$0` is the symlink stow made, whose directory holds
+# the library symlink too, so this resolves the same whether it is run from the
+# checkout or from ~/.local/bin.
+# shellcheck source=./tmux-picker-lib.sh
+. "$(cd -P "$(dirname "$0")" && pwd)/tmux-picker-lib.sh"
+
+if ! dir="$(picker_pane_dir "$pane")"; then
+  printf '%s' "$dir"; picker_hold; exit 1
 fi
 
 # -J joins wrapped lines, so a path broken across the pane width survives as one
 # string. No -e: escape sequences would otherwise land in the middle of a match.
 if ! raw="$(tmux capture-pane -p -J -S "-$DEPTH" -t "$pane" 2>&1)"; then
-  printf 'cannot read pane %s\n%s\n' "$pane" "$raw"; hold; exit 1
+  printf 'cannot read pane %s\n%s\n' "$pane" "$raw"; picker_hold; exit 1
 fi
 
 candidates_out="$(printf '%s\n' "$raw" | extract "$dir")"
 
 if [ -z "$candidates_out" ]; then
   echo "no file paths in the last $DEPTH lines of this pane"
-  hold
+  picker_hold
   exit 0
-fi
-
-if command -v bat >/dev/null 2>&1; then
-  PREVIEW='bat --color=always --style=numbers --line-range=:200 -- {2}'
-else
-  PREVIEW='head -200 -- {2}'
 fi
 
 set +e
@@ -186,15 +191,10 @@ selection="$(printf '%s\n' "$candidates_out" \
         --expect=ctrl-y --reverse --height=100% \
         --prompt='open > ' \
         --header='enter opens in nvim in a new window · ctrl-y copies the path' \
-        --preview="$PREVIEW" --preview-window='right,55%,border-left')"
+        --preview="$(picker_preview_command '{2}')" --preview-window='right,55%,border-left')"
 picked=$?
 set -e
-case "$picked" in
-  0)     ;;
-  1|130) exit 0 ;;
-  127)   echo "fzf is not installed, so there is nothing to pick with"; hold; exit 1 ;;
-  *)     printf 'the picker failed (exit %s)\n' "$picked"; hold; exit 1 ;;
-esac
+picker_triage_fzf "$picked"
 
 key="$(printf '%s\n' "$selection" | sed -n '1p')"
 chosen="$(printf '%s\n' "$selection" | sed -n '2p')"
@@ -210,5 +210,5 @@ if [ "$key" = "ctrl-y" ]; then
 fi
 
 if ! out="$(tmux-edit -t "$pane" "$file" ${line:+"$line"} 2>&1)"; then
-  printf 'could not open %s\n%s\n' "$file" "$out"; hold; exit 1
+  printf 'could not open %s\n%s\n' "$file" "$out"; picker_hold; exit 1
 fi

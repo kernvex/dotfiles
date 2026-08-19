@@ -134,5 +134,39 @@ same "a filename containing spaces stays one candidate" \
   "$ROOT/proj/a file with spaces.md" \
   "$(paths "$ROOT/proj" | head -1)"
 
+# --------------------------------------------------------------------------
+# The widened set, which ctrl-a reaches. Written after the fact rather than
+# before it, so it was proven by mutation instead: pointing --list-wide at the
+# default roots, and dropping the comment stripping, each fail exactly one case
+# below.
+# --------------------------------------------------------------------------
+mkdir -p "$ROOT/wide-a" "$ROOT/wide-b"
+printf 'x\n' > "$ROOT/wide-a/alpha.md"
+printf 'x\n' > "$ROOT/wide-b/beta.md"
+printf '%s\n# a comment, ignored\n\n%s\n' "$ROOT/wide-a" "$ROOT/wide-b" > "$ROOT/roots"
+touch -t 202601010000 "$ROOT/wide-a/alpha.md"
+touch -t 202602010000 "$ROOT/wide-b/beta.md"
+
+same "the widened set is read from the machine-local roots file" \
+  "beta.md
+alpha.md" \
+  "$(TMUX_OPEN_MD_ROOTS="$ROOT/roots" "$SUT" --list-wide 2>/dev/null | cut -f1)"
+
+# A commented-out root must not be walked. Without stripping, the whole line
+# becomes a directory name, which silently finds nothing — the failure mode is a
+# root that quietly stops working rather than an error.
+printf '#%s\n%s\n' "$ROOT/wide-a" "$ROOT/wide-b" > "$ROOT/roots-commented"
+same "a commented-out root is not searched" \
+  "beta.md" \
+  "$(TMUX_OPEN_MD_ROOTS="$ROOT/roots-commented" "$SUT" --list-wide 2>/dev/null | cut -f1)"
+
+# No file on this machine yet is the ordinary first-run state, not an error.
+# Displays are relative to the root they were found under, and in this case the
+# root IS the home directory, so they carry the subdirectory.
+same "with no roots file the widened set falls back to the home directory" \
+  "wide-b/beta.md
+wide-a/alpha.md" \
+  "$(TMUX_OPEN_MD_ROOTS="$ROOT/no-such-file" HOME="$ROOT" "$SUT" --list-wide 2>/dev/null | cut -f1 | grep -E 'alpha|beta')"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

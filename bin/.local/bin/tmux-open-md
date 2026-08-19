@@ -78,10 +78,12 @@ default_roots() { # <pane dir>
   top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
   printf '%s\n' "${top:-$dir}"
   # Where handoffs land. 0.06s, so there is no reason not to always include it.
-  # ONE temp root, not both $TMPDIR and /tmp: on macOS $TMPDIR is the per-user
-  # directory that agents actually write to, and on Linux it is usually unset and
-  # /tmp is the answer. Naming both would also make this untestable, since a test
-  # cannot empty the real /tmp.
+  #
+  # ONE temp root, not both $TMPDIR and /tmp. On macOS $TMPDIR is the per-user
+  # directory agents actually write to and /tmp is shared; on Linux $TMPDIR is
+  # usually unset and /tmp is the answer. So this names whichever one is real
+  # here. The spec said "the temp directories", plural — searching both would
+  # also be defensible, and would add other users' files on a shared machine.
   printf '%s\n' "${TMPDIR:-/tmp}"
 }
 
@@ -108,32 +110,34 @@ esac
 pane="${1:-}"
 [ -n "$pane" ] || { echo "usage: tmux-open-md <pane-id> | --list <root>..." >&2; exit 2; }
 
-hold() { read -r -n 1 -s -p "press any key" || true; }
+# The shared popup plumbing. `$0` is the symlink stow made, whose directory holds
+# the library symlink too, so this resolves the same whether it is run from the
+# checkout or from ~/.local/bin.
+# shellcheck source=./tmux-picker-lib.sh
+. "$(cd -P "$(dirname "$0")" && pwd)/tmux-picker-lib.sh"
 
-# EMPTY IS THE FAILURE MODE HERE, not a non-zero exit. `display-message` asked
-# about a pane that does not exist answers with exit 0 and an empty string, so a
-# guard testing only the status lets an empty directory through — and an empty
-# directory is not inert: `git -C "" rev-parse` falls back to the CURRENT one, so
-# the picker quietly lists a different repo than the one you pressed the key in.
-# Measured, against the literal `#{pane_id}` an unexpanded binding delivers.
-dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null || true)"
-if [ -z "$dir" ] || [ ! -d "$dir" ]; then
-  printf 'cannot read pane %s\n' "$pane"; hold; exit 1
+if ! dir="$(picker_pane_dir "$pane")"; then
+  printf '%s' "$dir"; picker_hold; exit 1
 fi
 
-# shellcheck disable=SC2046
-candidates_out="$(list $(default_roots "$dir" | tr '\n' ' '))"
+# ONE ROOT PER LINE INTO AN ARRAY, never an unquoted command substitution. A
+# pane directory containing a space — `~/Documents/My Project` — split into two
+# roots, each of which was then resolved against the popup's own working
+# directory, so the picker quietly listed whatever matched there instead of the
+# folder you were standing in.
+#
+# The `+` expansion guards the empty case: under `set -u`, "${roots[@]}" on an
+# empty array is an unbound-variable error in bash 3.2, which is what macOS ships.
+roots=()
+while IFS= read -r root; do
+  [ -n "$root" ] && roots+=("$root")
+done < <(default_roots "$dir")
+candidates_out="$(list ${roots[@]+"${roots[@]}"})"
 
 if [ -z "$candidates_out" ]; then
-  echo "no markdown in this folder or the temp directories"
-  hold
+  echo "no markdown in this folder or the temp directory"
+  picker_hold
   exit 0
-fi
-
-if command -v bat >/dev/null 2>&1; then
-  PREVIEW='bat --color=always --style=numbers --line-range=:200 -- {2}'
-else
-  PREVIEW='head -200 -- {2}'
 fi
 
 set +e
@@ -142,20 +146,15 @@ selection="$(printf '%s\n' "$candidates_out" \
         --reverse --height=100% \
         --prompt='here > ' \
         --header='enter opens in nvim in a new window · ctrl-a searches everywhere' \
-        --preview="$PREVIEW" --preview-window='right,55%,border-left' \
+        --preview="$(picker_preview_command '{2}')" --preview-window='right,55%,border-left' \
         --bind="ctrl-a:change-prompt(everywhere > )+reload($0 --list-wide)")"
 picked=$?
 set -e
-case "$picked" in
-  0)     ;;
-  1|130) exit 0 ;;
-  127)   echo "fzf is not installed, so there is nothing to pick with"; hold; exit 1 ;;
-  *)     printf 'the picker failed (exit %s)\n' "$picked"; hold; exit 1 ;;
-esac
+picker_triage_fzf "$picked"
 
 file="$(printf '%s' "$selection" | cut -f2)"
 [ -n "$file" ] || exit 0
 
 if ! out="$(tmux-edit -t "$pane" "$file" 2>&1)"; then
-  printf 'could not open %s\n%s\n' "$file" "$out"; hold; exit 1
+  printf 'could not open %s\n%s\n' "$file" "$out"; picker_hold; exit 1
 fi

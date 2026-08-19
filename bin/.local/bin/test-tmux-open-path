@@ -119,6 +119,17 @@ $ROOT/proj/src/other.ts" \
 src/other.ts
 src/main.ts')"
 
+# ONE FILE AT TWO LINES IS TWO DESTINATIONS. De-duplication is on the path AND
+# the line, not the path alone: a compiler naming the same file at 4 and at 9 is
+# offering two places to go, and collapsing them would throw away the one you
+# were not shown. The spec said "listed once" of a repeated path, which this
+# still honours — the case above proves it.
+same "the same file at two different lines is offered twice" \
+  "src/main.ts:9
+src/main.ts:4" \
+  "$(displays 'a src/main.ts:4
+b src/main.ts:9')"
+
 # Trailing punctuation, by the same rules tmux-open-url applies to links.
 same "a trailing full stop is not part of the path" \
   "$ROOT/proj/README.md" \
@@ -156,8 +167,11 @@ same "the display is relative to the pane's directory" \
   "src/main.ts" \
   "$(displays 'ERROR in src/main.ts')"
 
+# HOME is the fixture root here, so a file outside the pane's directory is still
+# under home and shortens. This expectation was originally written to match the
+# code rather than the spec, which asks for ~-shortening.
 same "a file outside the pane's directory shows a path you can still read" \
-  "$ROOT/elsewhere/far.txt" \
+  "~/elsewhere/far.txt" \
   "$(displays "see $ROOT/elsewhere/far.txt")"
 
 same "a display carries the line number when there is one" \
@@ -169,6 +183,25 @@ same "a display carries the line number when there is one" \
 same "a quoted filename with spaces is one path" \
   "$ROOT/proj/a file.md" \
   "$(paths 'opening "a file.md" now')"
+
+# A filename that GENUINELY ends in punctuation. The recogniser strips a
+# trailing run before testing, which is right far more often — but it has to be
+# able to fall back to the name as printed, or such a file is unreachable.
+#
+# Ending in `.` rather than `)`: brackets, commas and quotes DELIMIT a token, so
+# a name containing one can never be recognised in the first place and no
+# fallback could rescue it. `.` `;` `:` `!` `?` are the ones that can both end a
+# name and end a sentence, which is exactly the ambiguity the fallback exists for.
+printf 'x\n' > "$ROOT/proj/odd."
+same "a filename that really ends in punctuation is still found" \
+  "$ROOT/proj/odd." \
+  "$(paths 'see ./odd.')"
+
+# Outside the pane's directory but under home: shortened, because an absolute
+# path here is mostly a prefix you already know.
+same "a file under home shows as a ~ path" \
+  "~/home-file.md" \
+  "$(displays 'wrote ~/home-file.md')"
 
 # EXIT STATUS IS ASSERTED. Text with nothing in it is the ordinary case, and the
 # script that dies on it takes the popup down with it — the exact shape of the

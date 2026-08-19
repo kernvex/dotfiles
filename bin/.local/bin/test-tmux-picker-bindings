@@ -57,8 +57,9 @@ cat > "$STUBS/fzf" <<'STUBEOF'
 #!/bin/sh
 # --expect makes real fzf print the pressed key on its own first line; the
 # callers parse that, so the stub has to produce it too or the selection lands
-# one line out.
-for a in "$@"; do case "$a" in --expect*) printf '\n' ;; esac; done
+# one line out. FZF_STUB_KEY names the key that "closed" the picker, which is how
+# the ctrl-y path below is driven.
+for a in "$@"; do case "$a" in --expect*) printf '%s\n' "${FZF_STUB_KEY:-}" ;; esac; done
 head -1
 STUBEOF
 cat > "$STUBS/nvim" <<'STUBEOF'
@@ -217,6 +218,44 @@ PATH="$STUBS:$PATH" "$HERE/tmux-open-path" "$PATHPANE" >/dev/null 2>&1 </dev/nul
 if until_ok 8 test -n "$(win_for "$FIX/src/main.ts")"; then ok
 else bad "choosing a path from the pane opens it" \
          "no window carries it; windows are [$(T list-windows -a -F '#{window_name}=#{@edit_file}' | tr '\n' '|')]"; fi
+
+# A PANE DIRECTORY CONTAINING A SPACE. The roots were being passed as an
+# unquoted command substitution, so "My Project" became two roots — each then
+# resolved against the popup's own working directory, quietly walking whatever
+# happened to match there instead of the folder you pressed the key in. The same
+# failure class as the empty-directory guard above, in the script whose comments
+# insist a filename may contain spaces.
+mkdir -p "$WORK/My Project"; SPACED="$(cd -P "$WORK/My Project" && pwd)"
+printf '# spaced\n' > "$SPACED/spaced-notes.md"
+T new-session -d -s spaced -c "$SPACED" -x 80 -y 24 'sleep 600'
+SPACEPANE="$(T list-panes -t spaced -F '#{pane_id}' | head -1)"
+TMPDIR="$EMPTY" TMUX_OPEN_MD_ROOTS="$EMPTY/none" PATH="$STUBS:$PATH" \
+  "$HERE/tmux-open-md" "$SPACEPANE" >/dev/null 2>&1 </dev/null
+if until_ok 8 test -n "$(win_for "$SPACED/spaced-notes.md")"; then ok
+else bad "a pane directory containing a space still finds its markdown" \
+         "no window carries it; windows are [$(T list-windows -a -F '#{window_name}=#{@edit_file}' | tr '\n' '|')]"; fi
+
+# CTRL-Y COPIES THE PATH, which nothing else here exercises. pbcopy is stubbed
+# so the clipboard is a file the test can read; the assertion is on the ABSOLUTE
+# path, since a copied path that only means something in one directory is not
+# worth pasting anywhere.
+CLIP="$WORK/clipboard"
+cat > "$STUBS/pbcopy" <<STUBEOF
+#!/bin/sh
+cat > "$CLIP"
+STUBEOF
+chmod +x "$STUBS/pbcopy"
+
+COPYPANE="$(T new-window -t pick -d -P -F '#{pane_id}' -c "$FIX" "printf 'ERROR in src/main.ts:4\n'; sleep 600")"
+sleep 0.6
+FZF_STUB_KEY="ctrl-y" PATH="$STUBS:$PATH" "$HERE/tmux-open-path" "$COPYPANE" >/dev/null 2>&1 </dev/null
+if [ "$(cat "$CLIP" 2>/dev/null)" = "$FIX/src/main.ts" ]; then ok
+else bad "ctrl-y copies the absolute path" \
+         "clipboard holds [$(cat "$CLIP" 2>/dev/null)], wanted [$FIX/src/main.ts]"; fi
+
+# And copying must not also open it — the two verbs are alternatives.
+if [ -z "$(T list-windows -a -F '#{window_id} #{@edit_file}' | awk -v f="$FIX/src/main.ts" '{ sp=index($0," "); if (substr($0,sp+1)==f) print $1 }' | sed -n '2p')" ]; then ok
+else bad "ctrl-y copies instead of opening" "a second window was opened for the same file"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

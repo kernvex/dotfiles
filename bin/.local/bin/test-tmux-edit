@@ -62,7 +62,6 @@ PANE="$(T list-panes -t main -F '#{pane_id}' | head -1)"
 # whatever server the developer happens to have running, and the test would be
 # both wrong and destructive.
 export TMUX="$(T display-message -p '#{socket_path}'),$(T display-message -p '#{pid}'),0"
-export TMUX_EDIT_EDITOR="nvim"
 export PATH="$STUBS:$PATH"
 
 windows() { T list-windows -a -F '#{window_id}' | wc -l | tr -d ' '; }
@@ -141,6 +140,20 @@ else bad "opening a new file at a line asks the editor for that line" \
 if until_ok 5 grep -qxF -- "$(cd -P "$WORK/alpha" && pwd)/a file with spaces.md" "$ARGV"; then ok
 else bad "a filename containing spaces opens as one file" \
          "editor argv was [$(tr '\n' ' ' < "$ARGV" 2>/dev/null)]"; fi
+
+# TWO CONSECUTIVE SPACES, not one. Rebuilding awk's $0 after clearing $1
+# re-joins the fields with a single OFS, so a doubled space in a filename
+# collapses and the tag never matches its own window — reuse silently becomes a
+# second window. One space cannot catch this; the fields survive that.
+printf 'x\n' > "$WORK/alpha/two  spaces.md"
+"$SUT" -t "$PANE" "$WORK/alpha/two  spaces.md" >/dev/null 2>&1
+until_ok 5 test -n "$(win_for "$(cd -P "$WORK/alpha" && pwd)/two  spaces.md")"
+COUNT_BEFORE="$(windows)"
+"$SUT" -t "$PANE" "$WORK/alpha/two  spaces.md" >/dev/null 2>&1
+sleep 0.5
+if [ "$(windows)" -eq "$COUNT_BEFORE" ]; then ok
+else bad "a filename with doubled spaces still reuses its window" \
+         "window count went $COUNT_BEFORE -> $(windows)"; fi
 
 # --------------------------------------------------------------------------
 # The window belongs to the PANE's session, not to whichever session tmux would
