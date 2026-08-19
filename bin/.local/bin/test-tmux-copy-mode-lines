@@ -69,8 +69,8 @@ HSIZE="$(T display -p -t "$PANE" '#{history_size}')"
 # Wired at all? Without this a tmux predating the feature reports a wall of
 # opaque failures instead of the one fact that explains them.
 case "$(T show -gwv copy-mode-line-numbers 2>/dev/null)" in
-  default) ;;
-  *) echo "copy-mode-line-numbers is not default — is the conf edit in place,"
+  relative) ;;
+  *) echo "copy-mode-line-numbers is not relative — is the conf edit in place,"
      echo "and does this tmux ($(T display -p '#{version}')) have the option?"
      exit 1 ;;
 esac
@@ -119,69 +119,60 @@ TARGET=30
 
 # --- static: options and binding, read back off the running server ----------
 
-assert_eq "numbering is bottom-anchored, so recent lines get small numbers" \
-  "default" "$(T show -gwv copy-mode-line-numbers)"
+assert_eq "numbering is relative, so 0 is the cursor and history counts upward" \
+  "relative" "$(T show -gwv copy-mode-line-numbers)"
 assert_eq "gutter style resolves to the theme's recessive overlay" \
   "fg=$OVERLAY" "$(fmt '#{T:copy-mode-line-number-style}')"
 assert_eq "current-line style resolves to the theme's unspent rosewater" \
   "fg=$ROSEWATER,bold" "$(fmt '#{T:copy-mode-current-line-number-style}')"
 
 COLON="$(T list-keys -T copy-mode-vi | grep -E '^bind-key +-T copy-mode-vi +: ')"
-assert_contains "\`:\` still jumps" "goto-line" "$COLON"
-assert_contains "\`:\` also lands the cursor on the line" "top-line" "$COLON"
+assert_contains "\`:\` moves the cursor rather than jumping absolutely" "cursor-up" "$COLON"
+assert_contains "\`:\` passes the typed count through" "-N" "$COLON"
+case "$COLON" in *goto-line*)
+  fail "\`:\` still calls goto-line, which ignores relative numbering" ;;
+  *) ok ;;
+esac
 
-# --- behavioural: the two commands the binding issues -----------------------
+# --- behavioural: the motion the binding issues -----------------------------
+# The fixture prints content-line-1..200, so the line the cursor sits on names
+# its own position and "N lines back" can be checked by arithmetic on the text
+# rather than by translating screen coordinates.
 
-WANT="$(line_text "$TARGET")"
+cursor_num() { # the K in content-line-K under the cursor
+  fmt '#{copy_cursor_line}' | sed -n 's/^content-line-\([0-9]*\).*/\1/p'
+}
 
 recopy
-x goto-line "$TARGET"; code=$?
-assert_exit "goto-line exits clean" 0 "$code"
-x top-line
-assert_eq "jump then land: cursor sits on the top row" "0" "$(fmt '#{copy_cursor_y}')"
-assert_eq "jump then land: indicator reads the requested line" \
-  "$TARGET" "$(fmt '#{copy_position}')"
-assert_eq "jump then land: the cursor is on the line that number names" \
-  "$WANT" "$(fmt '#{copy_cursor_line}')"
+x history-bottom
+x cursor-up            # off the trailing blank, onto real content
+start_num="$(cursor_num)"
+assert_ne "precondition: cursor is on a numbered fixture line" "" "$start_num"
 
-# The coordinate model itself: the line under the cursor is indicator + row,
-# whatever the row is. Asserted with the cursor moved OFF the top row so it
-# cannot pass by arithmetic on a row known to be zero.
-DOWN=5
-recopy
-x goto-line "$TARGET"
-x top-line
-x -N "$DOWN" cursor-down
-assert_eq "cursor row moved off the top" "$DOWN" "$(fmt '#{copy_cursor_y}')"
-assert_eq "line under the cursor is indicator minus row, by content" \
-  "$(line_text $((TARGET - DOWN)))" "$(fmt '#{copy_cursor_line}')"
-assert_eq "the view did not scroll when the cursor moved inside it" \
-  "$TARGET" "$(fmt '#{copy_position}')"
+BACK=15
+x -N "$BACK" cursor-up; code=$?
+assert_exit "the counted motion exits clean" 0 "$code"
+assert_eq "\`:$BACK\` goes exactly $BACK lines back" \
+  "$((start_num - BACK))" "$(cursor_num)"
 
-# Regression evidence: goto-line ALONE moves the view and strands the cursor.
-# This is the bug the rebind exists to fix; the day it stops being true, the
-# rebind is redundant and this file should be the thing that says so.
-recopy
-x goto-line "$TARGET"
-assert_ne "goto-line alone does NOT put the cursor on the top row" \
-  "0" "$(fmt '#{copy_cursor_y}')"
-assert_ne "goto-line alone does NOT put the cursor on the target line" \
-  "$WANT" "$(fmt '#{copy_cursor_line}')"
+# Again from the new position: the count is always relative to where you are,
+# which is the property that lets the gutter be read at any moment.
+mid_num="$(cursor_num)"
+x -N "$BACK" cursor-up
+assert_eq "a second \`:$BACK\` is relative to the new cursor, not the start" \
+  "$((mid_num - BACK))" "$(cursor_num)"
 
-# A number past the end clamps to the bottom rather than erroring. Scrolled to
-# the very top FIRST — a freshly entered copy mode already reports
-# scroll_position 0, so asserting 0 from there would pass without the jump
-# having done anything at all.
-# Bottom-anchored numbering counts BACKWARDS, so an out-of-range number is a
-# request for something older than the buffer holds and clamps to the oldest
-# line — the opposite end from where absolute numbering would have put it.
-recopy
-x goto-line 0
-assert_eq "precondition: parked at the newest end" "0" "$(fmt '#{scroll_position}')"
-x goto-line 999999; code=$?
-assert_exit "an out-of-range line does not error" 0 "$code"
-assert_eq "an out-of-range line clamps to the oldest line held" \
-  "$(fmt '#{history_size}')" "$(fmt '#{scroll_position}')"
+# Running past the top scrolls the view rather than stopping at the screen edge.
+before_scroll="$(fmt '#{scroll_position}')"
+x -N 60 cursor-up
+assert_ne "a long motion scrolls the view" "$before_scroll" "$(fmt '#{scroll_position}')"
+assert_eq "and still lands exactly 60 back" \
+  "$((mid_num - BACK - 60))" "$(cursor_num)"
+
+# A count past the oldest line clamps there instead of erroring.
+x -N 999999 cursor-up; code=$?
+assert_exit "an over-long count does not error" 0 "$code"
+assert_eq "an over-long count clamps at the oldest line held" "1" "$(cursor_num)"
 x cancel
 
 # --- the real keystroke, and the rendered gutter ----------------------------
@@ -200,21 +191,41 @@ assert_ne "an outer client actually attached" "0" \
 
 JUMP=42
 T copy-mode -t "$PANE"; sleep 0.4
+x history-bottom
+x cursor-up
+key_start="$(cursor_num)"
 TO send-keys -t out ':'; sleep 0.5
 TO send-keys -t out "$JUMP"; sleep 0.3
 TO send-keys -t out Enter; sleep 0.7
 
-assert_eq "typing \`:$JUMP\` lands the cursor on that line" \
-  "$(line_text "$JUMP")" "$(fmt '#{copy_cursor_line}')"
-assert_eq "typing \`:$JUMP\` leaves the cursor on the top row" \
-  "0" "$(fmt '#{copy_cursor_y}')"
+assert_eq "typing \`:$JUMP\` for real goes $JUMP lines back" \
+  "$((key_start - JUMP))" "$(cursor_num)"
+
+# Typos must not throw you out of copy mode or move you.
+here="$(cursor_num)"
+TO send-keys -t out ':'; sleep 0.4; TO send-keys -t out Enter; sleep 0.6
+assert_eq "a bare Enter at the prompt is a no-op" "$here" "$(cursor_num)"
+assert_eq "and leaves you in copy mode" "1" "$(fmt '#{pane_in_mode}')"
+TO send-keys -t out ':'; sleep 0.4; TO send-keys -t out 'abc'; sleep 0.3
+TO send-keys -t out Enter; sleep 0.6
+assert_eq "a non-numeric count moves nothing" "$here" "$(cursor_num)"
+assert_eq "and also leaves you in copy mode" "1" "$(fmt '#{pane_in_mode}')"
+# Not silent, unlike the bare Enter above: tmux complains on the status line.
+# Asserted so the config comment beside the binding cannot drift from it.
+assert_contains "a non-numeric count says so rather than failing quietly" \
+  "Repeat count invalid" "$(TO capture-pane -p -t out)"
 
 # The gutter is painted over the mode's screen and never lands in the inner
-# pane's grid, so the outer capture is the only place it can be seen.
-RENDER="$(TO capture-pane -p -t out | sed -n '1p')"
-assert_contains "the gutter renders the absolute number" "$JUMP" "$RENDER"
-assert_contains "the gutter renders it beside its own line" \
-  "$JUMP $(line_text "$JUMP")" "$RENDER"
+# pane's grid, so the outer capture is the only place it can be seen. Step the
+# cursor down first: a counted motion leaves it on the TOP row, where there is
+# nothing above it to number, and the whole point is the numbers going back.
+x -N 3 cursor-down; sleep 0.4
+mid="$(cursor_num)"
+RENDER="$(TO capture-pane -p -t out)"
+assert_contains "the cursor's own line is 0" "  0 content-line-$mid" "$RENDER"
+assert_contains "one line back is 1" "  1 content-line-$((mid - 1))" "$RENDER"
+assert_contains "two lines back is 2" "  2 content-line-$((mid - 2))" "$RENDER"
+assert_contains "three lines back is 3" "  3 content-line-$((mid - 3))" "$RENDER"
 
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

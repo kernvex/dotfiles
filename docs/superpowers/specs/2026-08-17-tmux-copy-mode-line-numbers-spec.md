@@ -274,7 +274,7 @@ the top row and checks the line under it against independently fetched content. 
 assertion that compared `copy_position + copy_cursor_y` to the target while `copy_cursor_y` was
 known to be zero, which could not fail.
 
-## Amendment, 2026-08-18 (after using it)
+## Amendment, 2026-08-18 (after using it) — superseded by the entry below
 
 **Numbering reversed to bottom-anchored.** This spec chose `absolute` and argued the case at
 length, and the argument held on its own terms — those numbers do not drift. What it never
@@ -296,3 +296,26 @@ The rebind, the guard, the styles and every test but the coordinate arithmetic w
 this. That is the coupling ADR 0011 warned about, arriving on schedule: one option changed, and
 the test's coordinates inverted and the out-of-range case flipped direction, with nothing in
 tmux to catch either.
+
+## Amendment, 2026-08-18 (second pass, after seeing it on screen)
+
+`default` was wrong too, and the screenshot settled it in a way none of my measurements had:
+parked at the end of the buffer it renders 0 at the TOP of the screen with the count growing
+downward. I had measured that case, called it "the degenerate bottom screenful", and failed to
+notice it is the case you are in every single time you enter copy mode.
+
+The requirement, stated plainly, is 0 at the cursor with the count growing upward into history.
+Only `relative` renders that, and it forces a second change: `goto-line` consumes absolute
+coordinates no matter what the gutter displays, so `:` cannot be a jump at all. It now sends a
+counted `cursor-up`, the only motion that means what a relative gutter says.
+
+What that buys, all measured through a real attached client: past the top it scrolls rather
+than stopping; past the oldest line it clamps; a bare Enter is a silent no-op; a typo'd word
+moves nothing and reports "Repeat count invalid". The tests assert each one, including the
+rendered gutter reading 0 at the cursor and 1, 2, 3 going back.
+
+The lesson worth keeping is about the evidence, not the option. Every mode was measured before
+being chosen, and twice the measurement was of the wrong situation — a scrolled buffer when the
+common case is an unscrolled one. Rendering the thing and looking at it caught in one screenshot
+what three rounds of format probes had not.
+
