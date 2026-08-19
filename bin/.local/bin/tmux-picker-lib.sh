@@ -67,10 +67,15 @@ _PICKER_EXPLAINED=0
 
 # Fail with a reason the user can read. Everything that knows why it is stopping
 # should come through here, so the last-resort trap below stays silent for it.
+#
+# NO HOLD, deliberately. The bindings use `display-popup -EE`, which keeps the
+# popup open precisely when the command exits non-zero — so the message is
+# already going to stay on screen, and holding as well would cost a second
+# keypress to dismiss. The division is: a message with a ZERO exit has to hold
+# (success closes the popup), a message with a non-zero exit must not.
 picker_fail() { # <message...>
   _PICKER_EXPLAINED=1
   printf '%s\n' "$*"
-  picker_hold
   exit 1
 }
 
@@ -79,7 +84,6 @@ _picker_on_exit() { # <status>
   [ "${_PICKER_EXPLAINED:-0}" -eq 1 ] && return 0
   printf '%s exited %s with nothing to show for it — this is a bug in the picker, not in your files\n' \
     "${0##*/}" "$1"
-  picker_hold
 }
 
 picker_explain_unexpected_exit() { trap '_picker_on_exit $?' EXIT; }

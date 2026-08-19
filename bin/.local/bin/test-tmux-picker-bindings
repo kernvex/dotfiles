@@ -289,5 +289,27 @@ else bad "and the file that IS reachable still opens" \
 
 chmod 755 "$WORK/tmpish/locked"
 
+# --------------------------------------------------------------------------
+# THE POPUP MUST SURVIVE THE SCRIPT NOT STARTING. Every guard inside a picker
+# assumes the picker runs. A half-written file while it is being edited, a bad
+# interpreter, a syntax error — bash exits 2 before line one, no trap can fire,
+# and with a single -E the popup closes on the error message. That is exactly how
+# this feature failed in use: the scripts are symlinked live from the checkout,
+# so an intermediate state is an intermediate state on the running machine.
+#
+# `-EE` closes the popup only on success, so a failure stays on screen. Asserted
+# on the binding text rather than by watching a popup, because tmux exposes no
+# format for "a popup is open" — the behaviour was verified by hand and this is
+# what stops the flag being dropped again.
+# --------------------------------------------------------------------------
+for key in m g; do
+  bound="$(T list-keys -T prefix | grep -E "^bind-key[[:space:]]+-T prefix[[:space:]]+$key[[:space:]]")"
+  case "$bound" in
+    *" -EE "*) ok ;;
+    *) bad "prefix+$key keeps its popup open when the command fails" \
+           "the binding uses a single -E, so a script that dies before it can speak closes the box: [$bound]" ;;
+  esac
+done
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
