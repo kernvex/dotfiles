@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# tmux-picker-doctor — everything you would otherwise have to ask someone to
+# check, in one report, without opening anything.
+#
+#   tmux-picker-doctor [--dir <dir>] [--bin <dir>] [--conf <file>]
+#
+# WHY: three failures in this feature were diagnosed by a person at a keyboard
+# describing symptoms, because a popup is gone before it can be read. This checks
+# the things that actually went wrong — a script that will not parse, a missing
+# dependency, a running server whose bindings no longer match the file on disk —
+# and prints them together with the tail of the log.
+#
+# It is headless and read-only: no popups, no windows, nothing on anyone's
+# screen. Exits non-zero if any check failed, so it also works as a precondition.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "$0")" && pwd)"
+BIN="$HERE"
+CONF="$HOME/.tmux.conf"
+DIR="$PWD"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dir)  shift; DIR="${1:-$PWD}" ;;
+    --bin)  shift; BIN="${1:-$HERE}" ;;
+    --conf) shift; CONF="${1:-$HOME/.tmux.conf}" ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+PROBLEMS=0
+say()  { printf '%s\n' "$*"; }
+good() { printf '  ok    %s\n' "$*"; }
+bad()  { PROBLEMS=$((PROBLEMS + 1)); printf '  FAIL  %s\n' "$*"; }
+note() { printf '        %s\n' "$*"; }
+
+say "tmux-picker-doctor"
+say
+
+# --------------------------------------------------------------------- deps ---
+say "dependencies"
+for cmd in tmux fzf nvim; do
+  if command -v "$cmd" >/dev/null 2>&1; then
+    good "$cmd  $(command -v "$cmd")"
+  else
+    bad "$cmd is not on PATH"
+    case "$cmd" in
+      fzf)  note "without it a picker has nothing to pick with" ;;
+      nvim) note "without it a chosen file has nothing to open in" ;;
+    esac
+  fi
+done
+if command -v bat >/dev/null 2>&1; then good "bat  $(command -v bat) (preview)"
+else note "bat is absent; previews fall back to head, which is fine"; fi
+say
+
+# ------------------------------------------------------------------ scripts ---
+# THE CHECK THAT MATTERS MOST. bash exits 2 on a syntax error before line one,
+# so nothing inside a script can report it — only something outside can. A
+# half-written file during an edit is exactly this, and it is invisible to every
+# other guard in this feature.
+say "scripts in $BIN"
+for f in tmux-open-md tmux-open-path tmux-edit tmux-picker-lib.sh; do
+  path="$BIN/$f"
+  if [ ! -e "$path" ]; then bad "$f is missing"; continue; fi
+  if [ "$f" != "tmux-picker-lib.sh" ] && [ ! -x "$path" ]; then bad "$f is not executable"; continue; fi
+  if bash -n "$path" 2>/dev/null; then
+    good "$f parses"
+  else
+    bad "$f does not parse — this is the failure that closes a popup instantly"
+    note "$(bash -n "$path" 2>&1 | head -2)"
+  fi
+done
+say
+
+# ----------------------------------------------------------------- bindings ---
+# Drift between the file on disk and the server that is running. "I changed the
+# conf and did not reload" cannot be seen from inside a picker and is obvious
+# from out here.
+say "bindings"
+if [ ! -r "$CONF" ]; then
+  bad "cannot read $CONF"
+elif [ -z "${TMUX:-}" ] && ! tmux has-session 2>/dev/null; then
+  note "no tmux server to compare against; checked the file only"
+  for key in m g; do
+    if grep -qE "^bind $key run-shell" "$CONF"; then good "prefix+$key is bound in the conf"
+    else bad "prefix+$key is not bound in $CONF"; fi
+  done
+else
+  for key in m g; do
+    live="$(tmux list-keys -T prefix 2>/dev/null | grep -E "^bind-key[[:space:]]+-T prefix[[:space:]]+$key[[:space:]]" || true)"
+    if [ -z "$live" ]; then
+      bad "prefix+$key is not bound in the running server"
+      note "the conf may have changed since it started — reload with: tmux source-file $CONF"
+    elif printf '%s' "$live" | grep -q -- '-EE'; then
+      good "prefix+$key is bound, and keeps its popup open on failure"
+    else
+      bad "prefix+$key is bound with a single -E"
+      note "a failure will close the popup before its message can be read"
+    fi
+  done
+fi
+say
+
+# -------------------------------------------------------------------- walk ---
+say "the walk from $DIR"
+if [ ! -d "$DIR" ]; then
+  bad "$DIR is not a directory"
+else
+  started="$(date +%s)"
+  count="$("$BIN/tmux-open-md" --list "$DIR" 2>/dev/null | grep -c . || true)"
+  elapsed=$(( $(date +%s) - started ))
+  if [ "$count" -gt 0 ]; then good "$count markdown files, ${elapsed}s"
+  else note "no markdown under it — not a fault, just nothing to show"; fi
+fi
+say
+
+# --------------------------------------------------------------------- log ---
+LOG="${TMUX_PICKER_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/tmux-pickers/picker.log}"
+say "log  $LOG"
+if [ -s "$LOG" ]; then
+  tail -12 "$LOG" | sed 's/^/  /'
+else
+  note "empty — press the key once and it will have something to say"
+fi
+say
+
+if [ "$PROBLEMS" -eq 0 ]; then say "no problems found"; else say "$PROBLEMS problem(s) found"; fi
+[ "$PROBLEMS" -eq 0 ]

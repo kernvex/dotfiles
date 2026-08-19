@@ -23,6 +23,12 @@ LIB="$HERE/tmux-picker-lib.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# THE TESTS MUST NOT WRITE TO THE REAL LOG. Without this every case here appends
+# to whatever the machine actually uses, so the log a person is asked to send
+# turns out to be full of fixtures called "silent" and "declined". Set for the
+# whole file; individual cases override it when the path is what they assert.
+export TMUX_PICKER_LOG="$WORK/default.log"
+
 PASS=0
 FAIL=0
 ok()  { PASS=$((PASS + 1)); }
@@ -83,6 +89,66 @@ subject missing 'picker_triage_fzf 127'
 out="$("$WORK/missing" 2>&1 </dev/null)"; rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi 'fzf is not installed'; then ok
 else bad "a missing picker is named" "exit $rc, output [$out]"; fi
+
+# --------------------------------------------------------------------------
+# THE LOG. A popup is a bad place to read a diagnosis from: it is gone by the
+# time anyone thinks to look, and asking the person at the keyboard to reproduce
+# a failure with tracing on is asking them to do the work. So each run leaves a
+# record behind, and the record is what gets read afterwards.
+#
+# Every rule below exists because logging must never become the thing that
+# breaks the picker.
+# --------------------------------------------------------------------------
+LOGDIR="$WORK/logs"
+
+subject logs_something 'picker_log started "pane=%9 dir=/tmp"
+exit 0'
+TMUX_PICKER_LOG="$LOGDIR/p.log" "$WORK/logs_something" >/dev/null 2>&1
+if [ -s "$LOGDIR/p.log" ]; then ok
+else bad "a run leaves a line behind" "no log at $LOGDIR/p.log"; fi
+
+if grep -q 'started' "$LOGDIR/p.log" 2>/dev/null && grep -q 'pane=%9' "$LOGDIR/p.log" 2>/dev/null; then ok
+else bad "the line carries the event and its detail" "got [$(cat "$LOGDIR/p.log" 2>/dev/null)]"; fi
+
+# Which script wrote it, and when. A log shared by three scripts is unreadable
+# without the name, and a failure report is worthless without the time.
+if grep -qE '(logs_something)' "$LOGDIR/p.log" 2>/dev/null; then ok
+else bad "the line names the script that wrote it" "got [$(cat "$LOGDIR/p.log")]"; fi
+if grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' "$LOGDIR/p.log" 2>/dev/null; then ok
+else bad "the line is timestamped" "got [$(cat "$LOGDIR/p.log")]"; fi
+
+# A LOG THAT CANNOT BE WRITTEN MUST NOT MATTER. Under `set -e` a failed write is
+# indistinguishable from a real error, and the whole point of this feature is
+# that it stops taking the picker down with it.
+rm -rf "$WORK/ro"; mkdir -p "$WORK/ro"; chmod 500 "$WORK/ro"
+subject logs_readonly 'picker_log started "x"
+echo "still here"
+exit 0'
+out="$(TMUX_PICKER_LOG="$WORK/ro/nope/p.log" "$WORK/logs_readonly" 2>&1)"; rc=$?
+chmod 700 "$WORK/ro"
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'still here'; then ok
+else bad "a log that cannot be written does not break the run" "exit $rc, output [$out]"; fi
+
+# Unbounded growth in a file nobody prunes is a slow leak; rotation keeps one
+# generation, which is all anyone reads.
+rm -f "$LOGDIR/r.log"; mkdir -p "$LOGDIR"
+head -c 300000 /dev/zero | tr '\0' 'x' > "$LOGDIR/r.log"
+subject rotates 'picker_log started "after the cap"
+exit 0'
+TMUX_PICKER_LOG="$LOGDIR/r.log" "$WORK/rotates" >/dev/null 2>&1
+size="$(wc -c < "$LOGDIR/r.log" | tr -d ' ')"
+if [ "$size" -lt 300000 ]; then ok
+else bad "the log is rotated once it passes its cap" "still $size bytes"; fi
+if [ -s "$LOGDIR/r.log.1" ]; then ok
+else bad "rotation keeps the previous generation" "no r.log.1 beside it"; fi
+
+# The death that started all this has to be IN the log, not only on a screen
+# that has already closed.
+subject dies 'picker_log started "x"
+false'
+TMUX_PICKER_LOG="$LOGDIR/d.log" "$WORK/dies" >/dev/null 2>&1
+if grep -q 'exit' "$LOGDIR/d.log" 2>/dev/null && grep -qE '\b1\b' "$LOGDIR/d.log" 2>/dev/null; then ok
+else bad "an unexplained death is recorded with its status" "log: [$(cat "$LOGDIR/d.log" 2>/dev/null)]"; fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

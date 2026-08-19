@@ -11,6 +11,43 @@
 # and it was repaired recently; converging it is worth doing once that path is
 # covered, and not before.
 
+# ---------------------------------------------------------------------------
+# THE LOG.
+#
+# A popup is a bad place to read a diagnosis from: it is gone by the time anyone
+# thinks to look, and asking the person at the keyboard to reproduce a failure
+# with tracing turned on is asking them to do the debugging. So every run leaves
+# a record, and the record is what gets read afterwards.
+#
+# NOTHING HERE MAY EVER BREAK A PICKER. Under `set -e` a failed write is
+# indistinguishable from a real error, so every step is guarded and the function
+# always returns success. A picker that dies because its logging failed would be
+# a fourth entry in the list of silent deaths this exists to end.
+PICKER_LOG_FILE="${TMUX_PICKER_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/tmux-pickers/picker.log}"
+PICKER_LOG_MAX_BYTES="${TMUX_PICKER_LOG_MAX_BYTES:-262144}"
+
+picker_log() { # <event> [detail...]
+  local event="${1:-}" file="$PICKER_LOG_FILE" size
+  shift 2>/dev/null || true
+  [ -n "$event" ] || return 0
+
+  mkdir -p "${file%/*}" 2>/dev/null || return 0
+
+  # One generation kept. An unbounded file in a directory nobody prunes is a
+  # slow leak, and nobody reads further back than the last run anyway.
+  size="$(wc -c < "$file" 2>/dev/null || echo 0)"
+  size="${size// /}"
+  case "$size" in ''|*[!0-9]*) size=0 ;; esac
+  if [ "$size" -ge "$PICKER_LOG_MAX_BYTES" ]; then
+    mv -f "$file" "$file.1" 2>/dev/null || true
+  fi
+
+  printf '%s %s[%s] %s %s\n' \
+    "$(date +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo unknown-time)" \
+    "${0##*/}" "$$" "$event" "$*" >> "$file" 2>/dev/null || true
+  return 0
+}
+
 # Hold the popup open long enough for a message to be read. Without it the popup
 # closes the instant it opens and nothing is ever seen, which is indistinguishable
 # from the key doing nothing at all.
@@ -75,11 +112,13 @@ _PICKER_EXPLAINED=0
 # (success closes the popup), a message with a non-zero exit must not.
 picker_fail() { # <message...>
   _PICKER_EXPLAINED=1
+  picker_log failed "$*"
   printf '%s\n' "$*"
   exit 1
 }
 
 _picker_on_exit() { # <status>
+  picker_log exit "status=$1 explained=${_PICKER_EXPLAINED:-0}"
   [ "$1" -eq 0 ] && return 0
   [ "${_PICKER_EXPLAINED:-0}" -eq 1 ] && return 0
   printf '%s exited %s with nothing to show for it — this is a bug in the picker, not in your files\n' \

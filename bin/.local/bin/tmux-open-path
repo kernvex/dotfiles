@@ -171,10 +171,12 @@ pane="${1:-}"
 # picker_fail; anything else is reported by this rather than closing the popup
 # with nothing on screen.
 picker_explain_unexpected_exit
+picker_log started "pane=$pane argv=$*"
 
 if ! dir="$(picker_pane_dir "$pane")"; then
   picker_fail "$dir"
 fi
+picker_log pane_dir "$dir"
 
 # -J joins wrapped lines, so a path broken across the pane width survives as one
 # string. No -e: escape sequences would otherwise land in the middle of a match.
@@ -184,8 +186,10 @@ $raw"
 fi
 
 candidates_out="$(printf '%s\n' "$raw" | extract "$dir")"
+picker_log candidates "count=$(printf '%s' "$candidates_out" | grep -c . || true) from=$(printf '%s' "$raw" | grep -c . || true) lines"
 
 if [ -z "$candidates_out" ]; then
+  picker_log empty "no paths in the last $DEPTH lines"
   echo "no file paths in the last $DEPTH lines of this pane"
   picker_hold
   exit 0
@@ -200,6 +204,7 @@ selection="$(printf '%s\n' "$candidates_out" \
         --preview="$(picker_preview_command '{2}')" --preview-window='right,55%,border-left')"
 picked=$?
 set -e
+picker_log picker "exit=$picked"
 picker_triage_fzf "$picked"
 
 key="$(printf '%s\n' "$selection" | sed -n '1p')"
@@ -211,10 +216,12 @@ line="$(printf '%s' "$chosen" | cut -f3)"
 [ -n "$file" ] || exit 0
 
 if [ "$key" = "ctrl-y" ]; then
+  picker_log copied "$file"
   copy_path "$file"
   exit 0
 fi
 
+picker_log opening "$file"
 if ! out="$(tmux-edit -t "$pane" "$file" ${line:+"$line"} 2>&1)"; then
   picker_fail "could not open $file
 $out"

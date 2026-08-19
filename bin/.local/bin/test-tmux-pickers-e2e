@@ -56,7 +56,7 @@ start_picker() { # <script>  -> sets RUN, RC, OUT
   RC="$WORK/rc"; OUT="$WORK/out"; rm -f "$RC" "$OUT"
   RUN="$(T new-window -P -F '#{pane_id}' -t s1 -c "$FIX" \
     "export PATH=$WORK/stubs:\$PATH; export TMPDIR=$WORK/tmp; \
-     export TMUX_OPEN_MD_ROOTS=$WORK/none; \
+     export TMUX_OPEN_MD_ROOTS=$WORK/none; export TMUX_PICKER_LOG=$WORK/picker.log; \
      $HERE/$1 $TARGET > $OUT 2>&1; echo \$? > $RC")"
   until_ok 15 rendered
 }
@@ -98,6 +98,15 @@ else bad "Enter leaves the path picker cleanly" "rc=$(cat "$RC" 2>/dev/null || e
 
 if until_ok 10 test -n "$(opened "$FIX/src/main.ts")"; then ok
 else bad "Enter opens the file the pane named" "windows: [$(T list-windows -a -F '#{window_name}=#{@edit_file}' | tr '\n' '|')]"; fi
+
+# The trail a successful run leaves. This is what gets read when someone reports
+# that a key "did nothing" — so a run that works has to be as legible afterwards
+# as one that fails, or the log only ever shows half the story.
+for event in started pane_dir candidates 'picker exit=0' opening 'exit status=0'; do
+  if grep -q "$event" "$WORK/picker.log" 2>/dev/null; then ok
+  else bad "a successful run records '$event'" \
+           "log: [$(tail -6 "$WORK/picker.log" 2>/dev/null | tr '\n' '|')]"; fi
+done
 
 # --------------------------------------------------------------------------
 # ctrl-y copies rather than opens.

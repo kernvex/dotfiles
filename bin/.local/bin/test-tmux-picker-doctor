@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Tests for tmux-picker-doctor — the report you read instead of guessing.
+#
+#   ./test-tmux-picker-doctor     exit 0 = pass
+#
+# The doctor exists because three failures in this feature were diagnosed by
+# someone at a keyboard describing symptoms. It checks the things that actually
+# went wrong — a script that will not parse, a dependency that is not there, a
+# server whose bindings no longer match the file on disk — and says so in one
+# place, headlessly, without opening anything.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUT="$HERE/tmux-picker-doctor"
+[ -x "$SUT" ] || { echo "cannot find tmux-picker-doctor beside this test"; exit 1; }
+
+SOCK="doctor-test-$$-$RANDOM"
+T() { tmux -L "$SOCK" "$@"; }
+WORK="$(mktemp -d)"
+cleanup() { T kill-server 2>/dev/null; rm -rf "$WORK"; }
+trap cleanup EXIT
+
+PASS=0
+FAIL=0
+ok()  { PASS=$((PASS + 1)); }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "$2"; }
+
+CONF="$(cd -P "$HERE/../../../tmux" && pwd)/.tmux.conf"
+mkdir -p "$WORK/probe"
+printf '# x\n' > "$WORK/probe/a.md"
+
+# A healthy machine: every check passes and it says so.
+out="$(TMUX_PICKER_LOG="$WORK/log" "$SUT" --bin "$HERE" --conf "$CONF" --dir "$WORK/probe" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ]; then ok
+else bad "a healthy setup reports success" "exit $rc, output:
+$out"; fi
+
+for want in tmux fzf tmux-open-md tmux-open-path tmux-edit tmux-picker-lib; do
+  if printf '%s' "$out" | grep -q "$want"; then ok
+  else bad "the report mentions $want" "output:
+$out"; fi
+done
+
+# THE FAILURE THAT STARTED THIS: a script that will not parse. bash exits 2
+# before line one, so nothing inside it can report anything — only something
+# outside it can, which is this.
+mkdir -p "$WORK/broken"
+for f in tmux-open-md tmux-open-path tmux-edit tmux-picker-lib.sh; do
+  cp "$HERE/$f" "$WORK/broken/$f"
+done
+printf '\nif\n' >> "$WORK/broken/tmux-open-path"
+out="$("$SUT" --bin "$WORK/broken" --conf "$CONF" --dir "$WORK/probe" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ]; then ok
+else bad "a script that will not parse is a failure" "exit $rc, output:
+$out"; fi
+if printf '%s' "$out" | grep -q 'tmux-open-path'; then ok
+else bad "the report names the script that will not parse" "output:
+$out"; fi
+
+# A missing dependency, which otherwise shows up as a popup that closes.
+mkdir -p "$WORK/nopath"
+out="$(PATH="$WORK/nopath:/usr/bin:/bin" "$SUT" --bin "$HERE" --conf "$CONF" --dir "$WORK/probe" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi 'fzf'; then ok
+else bad "a missing fzf is reported" "exit $rc, output:
+$out"; fi
+
+# DRIFT: the running server's bindings against the file on disk. "I changed the
+# conf and did not reload" is invisible from inside a picker and obvious here.
+T -f "$CONF" new-session -d -s s1 -x 80 -y 24 'sleep 600'
+export TMUX="$(T display-message -p '#{socket_path}'),$(T display-message -p '#{pid}'),0"
+out="$("$SUT" --bin "$HERE" --conf "$CONF" --dir "$WORK/probe" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ]; then ok
+else bad "a server matching its conf reports no drift" "exit $rc, output:
+$out"; fi
+
+# Asserted on WHAT IT SAYS, not merely that it complained. A doctor that reports
+# the wrong reason is worse than one that stays quiet: it sends the reader off to
+# fix something that was never broken. Checking only for a non-zero exit passed
+# against a version that had stopped looking at the running server at all, and
+# was grumbling about the flag instead.
+T unbind-key -T prefix g
+out="$("$SUT" --bin "$HERE" --conf "$CONF" --dir "$WORK/probe" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'not bound in the running server'; then ok
+else bad "a binding missing from the running server is reported as missing" "exit $rc, output:
+$out"; fi
+
+# And it has to say what to do about it, since the fix is one command.
+if printf '%s' "$out" | grep -q 'source-file'; then ok
+else bad "the drift report says how to fix it" "output:
+$out"; fi
+unset TMUX
+
+# The log tail, so the report is the only thing anyone has to send.
+printf '2026-01-01T00:00:00 tmux-open-md[1] failed something went wrong\n' > "$WORK/log"
+out="$(TMUX_PICKER_LOG="$WORK/log" "$SUT" --bin "$HERE" --conf "$CONF" --dir "$WORK/probe" 2>&1)"
+if printf '%s' "$out" | grep -q 'something went wrong'; then ok
+else bad "the report includes the tail of the log" "output:
+$out"; fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

@@ -130,10 +130,12 @@ pane="${1:-}"
 # picker_fail; anything else is reported by this rather than closing the popup
 # with nothing on screen.
 picker_explain_unexpected_exit
+picker_log started "pane=$pane argv=$*"
 
 if ! dir="$(picker_pane_dir "$pane")"; then
   picker_fail "$dir"
 fi
+picker_log pane_dir "$dir"
 
 # ONE ROOT PER LINE INTO AN ARRAY, never an unquoted command substitution. A
 # pane directory containing a space — `~/Documents/My Project` — split into two
@@ -147,9 +149,12 @@ roots=()
 while IFS= read -r root; do
   [ -n "$root" ] && roots+=("$root")
 done < <(default_roots "$dir")
+picker_log roots "${roots[*]-none}"
 candidates_out="$(list ${roots[@]+"${roots[@]}"})"
+picker_log candidates "count=$(printf '%s' "$candidates_out" | grep -c . || true)"
 
 if [ -z "$candidates_out" ]; then
+  picker_log empty "no markdown under the default roots"
   echo "no markdown in this folder or the temp directory"
   picker_hold
   exit 0
@@ -165,11 +170,13 @@ selection="$(printf '%s\n' "$candidates_out" \
         --bind="ctrl-a:change-prompt(everywhere > )+reload($0 --list-wide)")"
 picked=$?
 set -e
+picker_log picker "exit=$picked"
 picker_triage_fzf "$picked"
 
 file="$(printf '%s' "$selection" | cut -f2)"
 [ -n "$file" ] || exit 0
 
+picker_log opening "$file"
 if ! out="$(tmux-edit -t "$pane" "$file" 2>&1)"; then
   picker_fail "could not open $file
 $out"
