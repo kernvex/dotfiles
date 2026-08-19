@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# Tests for tmux-open-md's candidate list — the pure seam.
+#
+#   ./test-tmux-open-md     exit 0 = pass
+#
+# Roots in, candidate list out. No tmux, no fzf, no editor: every case builds a
+# fixture tree in a temp directory with mtimes it sets itself, so the ordering is
+# asserted against times the test chose rather than against whatever the machine
+# happens to have on disk.
+#
+# Each line is  <display>\t<absolute path>  — the picker shows the first column
+# and opens the second.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUT="$HERE/tmux-open-md"
+[ -x "$SUT" ] || { echo "cannot find tmux-open-md beside this test"; exit 1; }
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+ROOT="$(cd -P "$WORK" && pwd)"
+
+PASS=0
+FAIL=0
+ok()  { PASS=$((PASS + 1)); }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "$2"; }
+
+# <description> <expected> <actual>
+same() {
+  if [ "$2" = "$3" ]; then ok
+  else bad "$1" "want: [${2//$'\n'/ | }]
+        got:  [${3//$'\n'/ | }]"; fi
+}
+
+displays() { "$SUT" --list "$@" 2>/dev/null | cut -f1; }
+paths()    { "$SUT" --list "$@" 2>/dev/null | cut -f2; }
+
+# ---------------------------------------------------------------- fixtures ---
+mkdir -p "$ROOT/proj/docs" "$ROOT/proj/.hidden" "$ROOT/proj/ignored" "$ROOT/empty" "$ROOT/other"
+printf 'a\n' > "$ROOT/proj/README.md"
+printf 'b\n' > "$ROOT/proj/docs/guide.md"
+printf 'c\n' > "$ROOT/proj/docs/old.md"
+printf 'd\n' > "$ROOT/proj/.hidden/secret.md"
+printf 'e\n' > "$ROOT/proj/ignored/build.md"
+printf 'f\n' > "$ROOT/proj/notes.txt"
+printf 'g\n' > "$ROOT/proj/a file with spaces.md"
+printf 'h\n' > "$ROOT/other/elsewhere.md"
+# git would hide this one; the picker must not.
+printf 'ignored/\n' > "$ROOT/proj/.gitignore"
+
+# Mtimes chosen here, so "newest first" is a claim about these numbers.
+touch -t 202601010000 "$ROOT/proj/docs/old.md"
+touch -t 202602010000 "$ROOT/proj/README.md"
+touch -t 202603010000 "$ROOT/proj/docs/guide.md"
+touch -t 202604010000 "$ROOT/proj/.hidden/secret.md"
+touch -t 202605010000 "$ROOT/proj/ignored/build.md"
+touch -t 202606010000 "$ROOT/proj/a file with spaces.md"
+
+# ------------------------------------------------------------------- cases ---
+
+# Newest first. The doc you were just editing is the one you almost always want,
+# which is the filesystem's version of tmux-open-url's most-recent-first rule.
+same "the newest file is listed first" \
+  "a file with spaces.md" \
+  "$(displays "$ROOT/proj" | head -1)"
+
+same "the oldest file is listed last" \
+  "docs/old.md" \
+  "$(displays "$ROOT/proj" | tail -1)"
+
+same "every markdown file under the root is listed, newest first" \
+  "a file with spaces.md
+ignored/build.md
+.hidden/secret.md
+docs/guide.md
+README.md
+docs/old.md" \
+  "$(displays "$ROOT/proj")"
+
+# The regression that guards the `find` decision in ADR 0003: fd's defaults would
+# drop both of these silently, and they are exactly the files someone wants.
+if displays "$ROOT/proj" | grep -qx '.hidden/secret.md'; then ok
+else bad "markdown inside a hidden directory is listed" "it is missing"; fi
+
+if displays "$ROOT/proj" | grep -qx 'ignored/build.md'; then ok
+else bad "markdown git would ignore is listed" "it is missing"; fi
+
+# Only markdown.
+if displays "$ROOT/proj" | grep -q 'notes.txt'; then
+  bad "a non-markdown file is not listed" "notes.txt came through"
+else ok; fi
+
+# Display is relative to the root it was found under; the second column is what
+# actually gets opened.
+same "the path column is absolute" \
+  "$ROOT/proj/README.md" \
+  "$(paths "$ROOT/proj" | grep 'README.md')"
+
+# Several roots: each file is shown relative to the root it came from, so the
+# list reads as names rather than as a column of shared prefix.
+same "with two roots, each file is relative to its own root" \
+  "elsewhere.md
+docs/guide.md" \
+  "$("$SUT" --list "$ROOT/other" "$ROOT/proj" 2>/dev/null | cut -f1 | grep -E 'elsewhere|guide')"
+
+# OVERLAPPING ROOTS, not a symlink: `find` does not descend into symlinked
+# directories, so a symlink case would be passed by a script with no
+# de-duplication in it at all. Roots that contain one another genuinely produce
+# the same file twice, and the pane's repo root plus a temp directory can overlap
+# in exactly this way.
+same "a file found under two roots is listed once" \
+  "1" \
+  "$("$SUT" --list "$ROOT/proj" "$ROOT/proj/docs" 2>/dev/null | cut -f2 | grep -c "/docs/guide.md$")"
+
+# EXIT STATUS IS ASSERTED on the empty cases. A picker whose list is empty is an
+# ordinary Tuesday, and the script that dies on it takes the popup with it — the
+# exact shape of the prefix+u outage, where `grep` returning 1 under `set -e`
+# killed the script before it could say "nothing here".
+out="$("$SUT" --list "$ROOT/empty" 2>&1)"; rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok
+else bad "a root with no markdown prints nothing and exits 0" "exit $rc, output [$out]"; fi
+
+out="$("$SUT" --list "$ROOT/no-such-directory" 2>/dev/null)"; rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok
+else bad "a root that does not exist prints nothing and exits 0" "exit $rc, output [$out]"; fi
+
+out="$("$SUT" --list 2>/dev/null)"; rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok
+else bad "no roots at all prints nothing and exits 0" "exit $rc, output [$out]"; fi
+
+# A filename with spaces must survive as one field, which is why the columns are
+# tab-separated rather than space-separated.
+same "a filename containing spaces stays one candidate" \
+  "$ROOT/proj/a file with spaces.md" \
+  "$(paths "$ROOT/proj" | head -1)"
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

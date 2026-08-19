@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# tmux-edit — open a file in an editor in its own tmux window, or go to the
+# window that already has it.
+#
+#   tmux-edit -t <pane-id> <file> [line]
+#
+# Both pickers end here. That is the entire reason it is a script rather than a
+# function copied into each of them: two implementations of "open or reuse" drift,
+# and the drift stays invisible until one key behaves differently from the other.
+#
+# THE PANE IS AN ARGUMENT, and has to be. The window must be created in the
+# session the pane belongs to, and the callers run inside a POPUP, where there is
+# no client context: `tmux display-message -p '#{session_name}'` asked from in
+# there answers for whichever session the server touched last, which on a machine
+# with several sessions open is reliably the wrong one. Measured, and silent.
+#
+# (The spec wrote this signature as `tmux-edit <file> [line]`. It cannot be: that
+# form has no way to know the session, and would land windows in whichever one
+# tmux felt like. The pane is the fix, not an embellishment.)
+set -euo pipefail
+
+# Overridable so the tests can assert WHICH file and WHICH line the editor is
+# asked for without running an editor.
+EDITOR_CMD="${TMUX_EDIT_EDITOR:-nvim}"
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+pane=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -t) shift; [ $# -gt 0 ] || die "-t needs a pane id"; pane="$1"; shift ;;
+    -t=*) pane="${1#-t=}"; shift ;;
+    --) shift; break ;;
+    -*) die "tmux-edit: unknown option $1" ;;
+    *) break ;;
+  esac
+done
+
+[ -n "$pane" ] || die "usage: tmux-edit -t <pane-id> <file> [line]"
+[ $# -gt 0 ] || die "usage: tmux-edit -t <pane-id> <file> [line]"
+
+file="$1"
+line="${2:-}"
+
+[ -f "$file" ] || die "tmux-edit: not a file: $file"
+
+# The PHYSICAL absolute path, because it is the identity a window is tagged with.
+# Two paths reaching the same file through a symlink must find the same window,
+# or reuse silently becomes "sometimes reuse".
+dir="$(cd -P "$(dirname "$file")" && pwd)"
+base="$(basename "$file")"
+abs="$dir/$base"
+
+# The tag is a window option rather than the window's NAME. Names collide —
+# README.md is not a unique key — and two different files would fight over one
+# window, each renaming it and stealing the other's.
+#
+# The path is the whole of the field after the id, not the second field: a
+# filename may contain spaces, and splitting on whitespace would truncate it.
+existing="$(
+  tmux list-windows -a -F '#{window_id} #{@edit_file}' 2>/dev/null \
+    | awk -v want="$abs" '{ id = $1; $1 = ""; sub(/^ /, ""); if ($0 == want) { print id; exit } }'
+)"
+
+if [ -n "$existing" ]; then
+  tmux select-window -t "$existing"
+  if [ -n "$line" ]; then
+    # Escape first: the editor may be in insert mode, and a `:42` typed there
+    # edits the file rather than moving through it.
+    tmux send-keys -t "$existing" Escape
+    tmux send-keys -t "$existing" ":$line" Enter
+  fi
+  exit 0
+fi
+
+# The pane's session, asked of the pane rather than of the server. See the note
+# at the top about what the server answers when nobody is holding a client.
+session="$(tmux display-message -p -t "$pane" '#{session_name}')"
+[ -n "$session" ] || die "tmux-edit: cannot find the session for pane $pane"
+
+# `neww` takes ONE shell-command string, so every argument has to survive a trip
+# through sh. printf %q is what makes a filename with spaces in it arrive as one
+# file instead of several.
+if [ -n "$line" ]; then
+  cmd="$(printf '%q +%q -- %q' "$EDITOR_CMD" "$line" "$abs")"
+else
+  cmd="$(printf '%q -- %q' "$EDITOR_CMD" "$abs")"
+fi
+
+window="$(tmux new-window -P -F '#{window_id}' -t "$session:" -c "$dir" -n "$base" "$cmd")"
+tmux set-option -w -t "$window" @edit_file "$abs"

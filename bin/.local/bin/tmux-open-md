@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# tmux-open-md — pick a markdown file and open it in its own window, in nvim.
+#
+#   tmux-open-md <pane-id>        scrape the roots, pick through fzf, open
+#   tmux-open-md --list <root>... print the candidate list for those roots
+#
+# Bound to prefix+m through display-popup, reached via run-shell so that
+# `#{pane_id}` is expanded before the popup runs — display-popup does not expand
+# formats in its shell-command, and a binding that assumes otherwise opens and
+# shuts in silence. See the note above `bind m` in .tmux.conf.
+#
+# --list is the seam the tests drive: roots in, candidates out, no tmux and no
+# picker. Each line is  <display>\t<absolute path>  — fzf shows the first column
+# and the second is what gets opened. Tab-separated because a filename may
+# contain spaces and a space-separated column would split it.
+set -euo pipefail
+
+# --------------------------------------------------------------- the walk ---
+#
+# `find`, not `fd`, per ADR 0003 — and measured on this workload rather than
+# taken on reputation. fd at its defaults is several times faster, but its
+# defaults honour .gitignore and skip hidden entries, which silently drops
+# exactly the files someone reaches for (a repo's CLAUDE.md, a submodule's docs,
+# anything under a hidden directory). Brought to parity with --hidden
+# --no-ignore it measured ~1.5x SLOWER than find on the same tree. The lossy
+# version is wrong and the correct one is slower, so there is nothing to reverse.
+
+# BSD and GNU stat disagree about how to print a modification time, and this runs
+# on both. Resolved once, into an ARRAY rather than a function, because it is
+# handed to `find -exec` — which execs a program and cannot call a shell function.
+if stat -f '%m' . >/dev/null 2>&1; then
+  STAT_CMD=(stat -f '%m %N')
+else
+  STAT_CMD=(stat -c '%Y %n')
+fi
+
+# Directories that are never worth walking: they are large, they are not where
+# anyone keeps prose, and on macOS some of them raise permission errors that
+# would render inside the popup.
+PRUNE=( -name .git -o -name node_modules -o -name Library -o -name .Trash )
+
+candidates() { # <root>...  ->  mtime \t display \t abspath
+  local root phys
+  for root in "$@"; do
+    [ -d "$root" ] || continue
+    phys="$(cd -P "$root" 2>/dev/null && pwd)" || continue
+    # -exec ... {} + rather than a pipe into xargs: BSD xargs runs its command
+    # once even on empty input, which would turn "no markdown here" into a stat
+    # error inside the popup.
+    find "$phys" \( "${PRUNE[@]}" \) -prune -o -type f -name '*.md' -exec "${STAT_CMD[@]}" {} + 2>/dev/null \
+      | while IFS=' ' read -r mtime path; do
+          [ -n "${path:-}" ] || continue
+          printf '%s\t%s\t%s\n' "$mtime" "${path#"$phys"/}" "$path"
+        done
+  done
+}
+
+list() { # <root>...
+  # Newest first, then one line per file. De-duplication keeps the first
+  # occurrence, which after the sort is the one whose mtime won — and roots
+  # overlap in ordinary use, since a repo root can contain a temp directory or
+  # be contained by another root.
+  candidates "$@" \
+    | sort -t"$(printf '\t')" -k1,1nr \
+    | awk -F'\t' '!seen[$3]++ { print $2 "\t" $3 }'
+}
+
+# ------------------------------------------------------------------- roots ---
+#
+# Two sets, because they cost an order of magnitude apart. The default is what
+# the key does and is effectively free; the wide one is 2.2s and is reached only
+# by asking for it. All of $HOME was measured and rejected at 32s and 15,234
+# files — neither responsive nor a list anyone can read.
+
+default_roots() { # <pane dir>
+  local dir="$1" top
+  # The repo root when there is one: standing in src/ should not hide docs/.
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  printf '%s\n' "${top:-$dir}"
+  # Where handoffs land. 0.06s, so there is no reason not to always include it.
+  # ONE temp root, not both $TMPDIR and /tmp: on macOS $TMPDIR is the per-user
+  # directory that agents actually write to, and on Linux it is usually unset and
+  # /tmp is the answer. Naming both would also make this untestable, since a test
+  # cannot empty the real /tmp.
+  printf '%s\n' "${TMPDIR:-/tmp}"
+}
+
+# A MACHINE-LOCAL DECLARATION: which directories hold documents is true of this
+# machine, not of this repo, so it is read from an untracked file rather than
+# committed. One root per line; blank lines and # comments ignored.
+WIDE_ROOTS_FILE="${TMUX_OPEN_MD_ROOTS:-$HOME/.config/tmux-open-md-roots}"
+
+wide_roots() {
+  if [ -r "$WIDE_ROOTS_FILE" ]; then
+    sed -e 's/#.*//' -e 's/[[:space:]]*$//' "$WIDE_ROOTS_FILE" | awk 'NF'
+  else
+    printf '%s\n' "$HOME"
+  fi
+}
+
+# -------------------------------------------------------------------- main ---
+
+case "${1:-}" in
+  --list) shift; list "$@"; exit 0 ;;
+  --list-wide) wide_roots | tr '\n' '\0' | xargs -0 "$0" --list; exit 0 ;;
+esac
+
+pane="${1:-}"
+[ -n "$pane" ] || { echo "usage: tmux-open-md <pane-id> | --list <root>..." >&2; exit 2; }
+
+hold() { read -r -n 1 -s -p "press any key" || true; }
+
+# EMPTY IS THE FAILURE MODE HERE, not a non-zero exit. `display-message` asked
+# about a pane that does not exist answers with exit 0 and an empty string, so a
+# guard testing only the status lets an empty directory through — and an empty
+# directory is not inert: `git -C "" rev-parse` falls back to the CURRENT one, so
+# the picker quietly lists a different repo than the one you pressed the key in.
+# Measured, against the literal `#{pane_id}` an unexpanded binding delivers.
+dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null || true)"
+if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+  printf 'cannot read pane %s\n' "$pane"; hold; exit 1
+fi
+
+# shellcheck disable=SC2046
+candidates_out="$(list $(default_roots "$dir" | tr '\n' ' '))"
+
+if [ -z "$candidates_out" ]; then
+  echo "no markdown in this folder or the temp directories"
+  hold
+  exit 0
+fi
+
+if command -v bat >/dev/null 2>&1; then
+  PREVIEW='bat --color=always --style=numbers --line-range=:200 -- {2}'
+else
+  PREVIEW='head -200 -- {2}'
+fi
+
+set +e
+selection="$(printf '%s\n' "$candidates_out" \
+  | fzf --delimiter="$(printf '\t')" --with-nth=1 \
+        --reverse --height=100% \
+        --prompt='here > ' \
+        --header='enter opens in nvim in a new window · ctrl-a searches everywhere' \
+        --preview="$PREVIEW" --preview-window='right,55%,border-left' \
+        --bind="ctrl-a:change-prompt(everywhere > )+reload($0 --list-wide)")"
+picked=$?
+set -e
+case "$picked" in
+  0)     ;;
+  1|130) exit 0 ;;
+  127)   echo "fzf is not installed, so there is nothing to pick with"; hold; exit 1 ;;
+  *)     printf 'the picker failed (exit %s)\n' "$picked"; hold; exit 1 ;;
+esac
+
+file="$(printf '%s' "$selection" | cut -f2)"
+[ -n "$file" ] || exit 0
+
+if ! out="$(tmux-edit -t "$pane" "$file" 2>&1)"; then
+  printf 'could not open %s\n%s\n' "$file" "$out"; hold; exit 1
+fi

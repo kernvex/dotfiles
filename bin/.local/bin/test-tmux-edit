@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Tests for tmux-edit — how a file becomes a window.
+#
+#   ./test-tmux-edit     exit 0 = pass
+#
+# Both pickers end here, which is the whole reason this is a script of its own:
+# two copies of open-or-reuse would drift, and the drift would stay invisible
+# until one key started behaving differently from the other.
+#
+# A scratch server on its own socket, driven headless — creating and selecting
+# windows needs no attached client, unlike a popup, so nothing here manufactures
+# a pty. `nvim` is a STUB on PATH that records its argv and then echoes stdin,
+# so the editor's contract is asserted (which file, which line) without running
+# an editor, and keys sent to a reused window land somewhere the test can read.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUT="$HERE/tmux-edit"
+[ -x "$SUT" ] || { echo "cannot find tmux-edit beside this test"; exit 1; }
+
+SOCK="tmux-edit-test-$$-$RANDOM"
+T() { tmux -L "$SOCK" "$@"; }
+
+WORK="$(mktemp -d)"
+STUBS="$WORK/stubs"
+ARGV="$WORK/argv"
+mkdir -p "$STUBS"
+: > "$ARGV"   # so a grep before the first call reports "no match", not "no file"
+cat > "$STUBS/nvim" <<STUBEOF
+#!/bin/sh
+printf '%s\n' "\$@" >> "$ARGV"
+cat
+STUBEOF
+chmod +x "$STUBS/nvim"
+
+cleanup() { T kill-server 2>/dev/null; rm -rf "$WORK"; }
+trap cleanup EXIT
+
+PASS=0
+FAIL=0
+ok()  { PASS=$((PASS + 1)); }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "$2"; }
+
+# Poll rather than sleep a fixed amount: a window's command starts asynchronously.
+until_ok() { # <seconds> <command...>
+  local deadline=$(( $(date +%s) + $1 )); shift
+  while [ "$(date +%s)" -lt "$deadline" ]; do "$@" && return 0; sleep 0.1; done
+  return 1
+}
+
+mkdir -p "$WORK/alpha" "$WORK/beta"
+printf 'one\ntwo\nthree\n' > "$WORK/alpha/notes.md"
+printf 'one\ntwo\nthree\n' > "$WORK/beta/notes.md"
+printf 'x\n' > "$WORK/alpha/a file with spaces.md"
+
+PATH="$STUBS:$PATH" T new-session -d -s main -x 80 -y 24 'sleep 600' \
+  || { echo "could not start scratch server"; exit 1; }
+PANE="$(T list-panes -t main -F '#{pane_id}' | head -1)"
+
+# Point the script at the SCRATCH server. In real use it runs inside a popup,
+# where tmux exports TMUX for it; without this its bare `tmux` calls would go to
+# whatever server the developer happens to have running, and the test would be
+# both wrong and destructive.
+export TMUX="$(T display-message -p '#{socket_path}'),$(T display-message -p '#{pid}'),0"
+export TMUX_EDIT_EDITOR="nvim"
+export PATH="$STUBS:$PATH"
+
+windows() { T list-windows -a -F '#{window_id}' | wc -l | tr -d ' '; }
+win_for() { T list-windows -a -F '#{window_id} #{@edit_file}' | awk -v f="$1" '$2==f {print $1}'; }
+
+# --------------------------------------------------------------------------
+BEFORE="$(windows)"
+"$SUT" -t "$PANE" "$WORK/alpha/notes.md" >/dev/null 2>&1
+until_ok 5 test "$(windows)" -gt "$BEFORE"
+
+W="$(win_for "$(cd -P "$WORK/alpha" && pwd)/notes.md")"
+if [ -n "$W" ]; then ok
+else bad "opening a file creates a window tagged with its path" \
+         "no window carries @edit_file for it; windows are [$(T list-windows -a -F '#{window_id} name=#{window_name} f=#{@edit_file}' | tr '\n' '|')]"; fi
+
+if [ -n "$W" ]; then
+  if [ "$(T display-message -p -t "$W" '#{pane_current_path}')" = "$(cd -P "$WORK/alpha" && pwd)" ]; then ok
+  else bad "the window opens in the file's directory" \
+           "got [$(T display-message -p -t "$W" '#{pane_current_path}')]"; fi
+
+  if [ "$(T display-message -p -t "$W" '#{window_name}')" = "notes.md" ]; then ok
+  else bad "the window is named after the file" \
+           "got [$(T display-message -p -t "$W" '#{window_name}')]"; fi
+else
+  bad "the window opens in the file's directory" "no window to inspect"
+  bad "the window is named after the file" "no window to inspect"
+fi
+
+if until_ok 5 grep -qxF -- "$(cd -P "$WORK/alpha" && pwd)/notes.md" "$ARGV"; then ok
+else bad "the editor is asked to open that file" "editor argv was [$(tr '\n' ' ' < "$ARGV" 2>/dev/null)]"; fi
+
+# --------------------------------------------------------------------------
+# Reuse. The second call must not make a second window.
+# Guarded on the window existing: an unchanged count proves reuse only if
+# something was created in the first place, and without this guard a script that
+# does nothing at all passes.
+COUNT_BEFORE="$(windows)"
+"$SUT" -t "$PANE" "$WORK/alpha/notes.md" >/dev/null 2>&1
+sleep 0.5
+if [ -n "$W" ] && [ "$(windows)" -eq "$COUNT_BEFORE" ]; then ok
+else bad "opening the same file again reuses its window" \
+         "window count went $COUNT_BEFORE -> $(windows), first window was [$W]"; fi
+
+if [ "$(T display-message -p '#{window_id}')" = "$W" ]; then ok
+else bad "opening the same file again selects that window" \
+         "active window is [$(T display-message -p '#{window_id}')], wanted [$W]"; fi
+
+# --------------------------------------------------------------------------
+# Same basename, different file. Names collide; paths do not.
+"$SUT" -t "$PANE" "$WORK/beta/notes.md" >/dev/null 2>&1
+until_ok 5 test -n "$(win_for "$(cd -P "$WORK/beta" && pwd)/notes.md")"
+W2="$(win_for "$(cd -P "$WORK/beta" && pwd)/notes.md")"
+if [ -n "$W2" ] && [ "$W2" != "$W" ]; then ok
+else bad "two files with the same basename get their own windows" \
+         "alpha/notes.md is [$W], beta/notes.md is [$W2]"; fi
+
+# --------------------------------------------------------------------------
+# Line numbers.
+"$SUT" -t "$PANE" "$WORK/alpha/notes.md" 2 >/dev/null 2>&1
+sleep 0.6
+jumped() { T capture-pane -p -t "$W" 2>/dev/null | grep -q ':2'; }
+if [ -n "$W" ] && until_ok 5 jumped; then ok
+else bad "reusing a window for a line jumps to that line" \
+         "nothing resembling a line jump reached the pane: [$(T capture-pane -p -t "$W" 2>/dev/null | tr -d '\n' | tail -c 60)]"; fi
+
+printf 'x\n' > "$WORK/fresh.md"
+"$SUT" -t "$PANE" "$WORK/fresh.md" 7 >/dev/null 2>&1
+if until_ok 5 grep -qxF -- '+7' "$ARGV"; then ok
+else bad "opening a new file at a line asks the editor for that line" \
+         "editor argv was [$(tr '\n' ' ' < "$ARGV" 2>/dev/null)]"; fi
+
+# --------------------------------------------------------------------------
+# A filename with spaces must survive every layer of quoting between here and
+# the editor.
+"$SUT" -t "$PANE" "$WORK/alpha/a file with spaces.md" >/dev/null 2>&1
+if until_ok 5 grep -qxF -- "$(cd -P "$WORK/alpha" && pwd)/a file with spaces.md" "$ARGV"; then ok
+else bad "a filename containing spaces opens as one file" \
+         "editor argv was [$(tr '\n' ' ' < "$ARGV" 2>/dev/null)]"; fi
+
+# --------------------------------------------------------------------------
+# The window belongs to the PANE's session, not to whichever session tmux would
+# have picked. Inside a popup there is no client context, so a script asking
+# tmux "which session am I in" is answered for the wrong one — measured.
+# BOTH DIRECTIONS, and it has to be both. Asserting only that a pane in `other`
+# produces a window in `other` is passed by a script that ignores the pane
+# entirely and guesses the server's current session — which, the moment `other`
+# is the most recently created one, is the same answer. Measured: that mutation
+# survived a one-directional version of this case. Two panes in two sessions
+# cannot both be satisfied by one guess.
+T new-session -d -s other -x 80 -y 24 'sleep 600'
+OTHER_PANE="$(T list-panes -t other -F '#{pane_id}' | head -1)"
+session_of() { T list-windows -a -F '#{window_id} #{session_name}' | awk -v w="$1" '$1==w {print $2}'; }
+
+printf 'x\n' > "$WORK/from-other.md"
+"$SUT" -t "$OTHER_PANE" "$WORK/from-other.md" >/dev/null 2>&1
+until_ok 5 test -n "$(win_for "$(cd -P "$WORK" && pwd)/from-other.md")"
+W3="$(win_for "$(cd -P "$WORK" && pwd)/from-other.md")"
+
+printf 'x\n' > "$WORK/from-main.md"
+"$SUT" -t "$PANE" "$WORK/from-main.md" >/dev/null 2>&1
+until_ok 5 test -n "$(win_for "$(cd -P "$WORK" && pwd)/from-main.md")"
+W4="$(win_for "$(cd -P "$WORK" && pwd)/from-main.md")"
+
+if [ -n "$W3" ] && [ "$(session_of "$W3")" = "other" ]; then ok
+else bad "a pane in one session opens its window there" \
+         "window [$W3] landed in session [$(session_of "$W3")], wanted [other]"; fi
+
+if [ -n "$W4" ] && [ "$(session_of "$W4")" = "main" ]; then ok
+else bad "a pane in another session opens its window there instead" \
+         "window [$W4] landed in session [$(session_of "$W4")], wanted [main]"; fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# tmux-open-path — pick a file path out of the pane you are looking at, and open
+# it in nvim in its own window.
+#
+#   tmux-open-path <pane-id>          scrape that pane, pick through fzf, open
+#   tmux-open-path --extract <dir>    read text on stdin, print the candidates
+#
+# The sibling of tmux-open-url: same principle, different noun. A failing test
+# names a file and a line, a compiler names four, git status names eleven — all
+# already printed, and all still faster to guess at than to use.
+#
+# Bound to prefix+g through display-popup, reached via run-shell so `#{pane_id}`
+# is expanded before the popup runs. See the note above `bind g` in .tmux.conf.
+#
+# EXISTENCE IS THE FILTER, and it is what makes the rest of this tractable.
+# Almost any word can look like a path, so a recogniser tuned to avoid false
+# positives would miss the real ones — `3/4` and `src/main.ts` are the same shape.
+# Instead the recogniser is deliberately generous and every candidate is resolved
+# and dropped unless it is a file that is really there. That keeps the list short
+# without brittle pattern rules, and it is also why a file named in output but
+# since deleted is never offered.
+set -euo pipefail
+
+DEPTH=2000
+
+# --------------------------------------------------------------- extraction ---
+#
+# Each output line is  <display>\t<absolute path>\t<line>  — tab-separated
+# because a filename may contain spaces, and the line is empty when the text did
+# not carry one.
+#
+# Order is most-recent-first, de-duplicated keeping the recent occurrence, which
+# is tmux-open-url's rule unchanged and for the same reason: the path you are
+# reacting to is the one that just printed. Deliberately NOT modification time —
+# that is the question the markdown picker answers, and it is a different one.
+
+# Tokens: a quoted run, or a bare run that stops at the characters which delimit
+# a path in every context these appear in — whitespace, quotes, brackets, commas.
+TOKEN_RE='"[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]"'"'"'(),<>]+'
+
+extract() { # <base-dir>
+  local base="$1" ln tok path line ctx_line display abs
+  base="$(cd -P "$base" 2>/dev/null && pwd)" || base="$PWD"
+
+  # Reversed first, so "most recent" is simply "seen first", and the de-duplication
+  # below keeps the recent occurrence rather than the oldest.
+  awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) print a[i] }' \
+  | while IFS= read -r ln; do
+      # Cheap pre-filter: a path has a separator or an extension. This is not a
+      # correctness rule — the existence check is — it just keeps the loop below
+      # off every word of a 2000-line pane.
+      case "$ln" in
+        *[/.]*) ;;
+        *) continue ;;
+      esac
+
+      # `File "x.py", line 3` — the traceback form, where the line number is
+      # prose rather than a colon suffix.
+      ctx_line=""
+      case "$ln" in
+        *", line "[0-9]*) ctx_line="$(printf '%s' "$ln" | sed -n 's/.*, line \([0-9][0-9]*\).*/\1/p')" ;;
+      esac
+
+      printf '%s\n' "$ln" | grep -oE "$TOKEN_RE" 2>/dev/null | while IFS= read -r tok; do
+        [ -n "$tok" ] || continue
+
+        # Unwrap a quoted run. This is the only form in which a filename
+        # containing spaces can be recognised without guessing where it ends.
+        case "$tok" in
+          \"*\") tok="${tok#\"}"; tok="${tok%\"}" ;;
+          \'*\') tok="${tok#\'}"; tok="${tok%\'}" ;;
+        esac
+
+        # Trailing sentence punctuation comes off BEFORE the line number is
+        # split out. Compiler output ends the whole thing with a colon —
+        # `src/main.ts:42:8: error` — and a line/col pattern anchored on a digit
+        # never matches while that colon is still attached.
+        tok="$(printf '%s' "$tok" | sed 's/[].,;:!?)}]*$//')"
+
+        # A trailing :line or :line:col belongs to the message, not to the name.
+        line=""
+        case "$tok" in
+          *:[0-9]*:[0-9]*) line="$(printf '%s' "$tok" | sed -n 's/.*:\([0-9][0-9]*\):[0-9][0-9]*$/\1/p')"
+                           tok="$(printf '%s' "$tok" | sed 's/:[0-9][0-9]*:[0-9][0-9]*$//')" ;;
+          *:[0-9]*)        line="$(printf '%s' "$tok" | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+                           tok="$(printf '%s' "$tok" | sed 's/:[0-9][0-9]*$//')" ;;
+        esac
+        [ -n "$line" ] || line="$ctx_line"
+
+        [ -n "$tok" ] || continue
+
+        # Try the token with its trailing sentence punctuation removed, then as
+        # it stands. Stripping first is right far more often — a path ending a
+        # sentence collects the stop — but a filename may legitimately end in one
+        # of these, and the existence check is what decides between them.
+        for path in "$(printf '%s' "$tok" | sed 's/[].,;:!?)}'"'"'"]*$//')" "$tok"; do
+          [ -n "$path" ] || continue
+          case "$path" in
+            "~")   continue ;;
+            "~/"*) path="$HOME/${path#\~/}" ;;
+          esac
+          case "$path" in
+            /*) abs="$path" ;;
+            *)  abs="$base/$path" ;;
+          esac
+          # -f and not -e: a directory is not something to open in an editor.
+          [ -f "$abs" ] || continue
+
+          abs="$(cd -P "$(dirname "$abs")" 2>/dev/null && pwd)/$(basename "$abs")" || continue
+
+          case "$abs" in
+            "$base"/*) display="${abs#"$base"/}" ;;
+            *)         display="$abs" ;;
+          esac
+          [ -z "$line" ] || display="$display:$line"
+
+          printf '%s\t%s\t%s\n' "$display" "$abs" "$line"
+          break
+        done
+      done
+    done \
+  | awk -F'\t' '!seen[$2 "\t" $3]++'
+}
+
+# ------------------------------------------------------------------ actions ---
+
+# The same two verbs tmux-open-url offers, and the clipboard one behaves the same
+# way. It is duplicated rather than shared: it is two lines, and the alternative
+# is editing tmux-open-url — a script whose copy path has no test and which was
+# repaired recently. Converging the three is worth doing once that path is
+# covered; doing it here would put a just-fixed script back in scope for nothing.
+copy_path() { # <path>
+  if command -v pbcopy >/dev/null 2>&1; then printf '%s' "$1" | pbcopy
+  else tmux set-buffer -- "$1"; fi
+}
+
+hold() { read -r -n 1 -s -p "press any key" || true; }
+
+# --------------------------------------------------------------------- main ---
+
+case "${1:-}" in
+  --extract)
+    shift
+    extract "${1:-$PWD}"
+    exit 0
+    ;;
+esac
+
+pane="${1:-}"
+[ -n "$pane" ] || { echo "usage: tmux-open-path <pane-id> | --extract <dir>" >&2; exit 2; }
+
+# EMPTY IS THE FAILURE MODE HERE, not a non-zero exit. `display-message` asked
+# about a pane that does not exist answers with exit 0 and an empty string, so a
+# guard testing only the status lets an empty directory through — and an empty
+# directory is not inert: `git -C "" rev-parse` falls back to the CURRENT one, so
+# the picker quietly lists a different repo than the one you pressed the key in.
+# Measured, against the literal `#{pane_id}` an unexpanded binding delivers.
+dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null || true)"
+if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+  printf 'cannot read pane %s\n' "$pane"; hold; exit 1
+fi
+
+# -J joins wrapped lines, so a path broken across the pane width survives as one
+# string. No -e: escape sequences would otherwise land in the middle of a match.
+if ! raw="$(tmux capture-pane -p -J -S "-$DEPTH" -t "$pane" 2>&1)"; then
+  printf 'cannot read pane %s\n%s\n' "$pane" "$raw"; hold; exit 1
+fi
+
+candidates_out="$(printf '%s\n' "$raw" | extract "$dir")"
+
+if [ -z "$candidates_out" ]; then
+  echo "no file paths in the last $DEPTH lines of this pane"
+  hold
+  exit 0
+fi
+
+if command -v bat >/dev/null 2>&1; then
+  PREVIEW='bat --color=always --style=numbers --line-range=:200 -- {2}'
+else
+  PREVIEW='head -200 -- {2}'
+fi
+
+set +e
+selection="$(printf '%s\n' "$candidates_out" \
+  | fzf --delimiter="$(printf '\t')" --with-nth=1 \
+        --expect=ctrl-y --reverse --height=100% \
+        --prompt='open > ' \
+        --header='enter opens in nvim in a new window · ctrl-y copies the path' \
+        --preview="$PREVIEW" --preview-window='right,55%,border-left')"
+picked=$?
+set -e
+case "$picked" in
+  0)     ;;
+  1|130) exit 0 ;;
+  127)   echo "fzf is not installed, so there is nothing to pick with"; hold; exit 1 ;;
+  *)     printf 'the picker failed (exit %s)\n' "$picked"; hold; exit 1 ;;
+esac
+
+key="$(printf '%s\n' "$selection" | sed -n '1p')"
+chosen="$(printf '%s\n' "$selection" | sed -n '2p')"
+[ -n "$chosen" ] || exit 0
+
+file="$(printf '%s' "$chosen" | cut -f2)"
+line="$(printf '%s' "$chosen" | cut -f3)"
+[ -n "$file" ] || exit 0
+
+if [ "$key" = "ctrl-y" ]; then
+  copy_path "$file"
+  exit 0
+fi
+
+if ! out="$(tmux-edit -t "$pane" "$file" ${line:+"$line"} 2>&1)"; then
+  printf 'could not open %s\n%s\n' "$file" "$out"; hold; exit 1
+fi

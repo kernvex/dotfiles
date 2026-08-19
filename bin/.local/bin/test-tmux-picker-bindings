@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# Tests for what prefix+m and prefix+g hand their pickers.
+#
+#   ./test-tmux-picker-bindings     exit 0 = pass
+#
+# One file for both keys rather than one per key (the spec named two): the
+# harness is the whole content, the cases differ only in which key and which
+# script, and three near-identical copies of a pty-and-scratch-server rig would
+# rot at different rates. test-tmux-open-url-binding stays separate because it
+# already exists and covers the key this pattern was learned on.
+#
+# THE BUG THESE EXIST FOR: `display-popup` does NOT expand `#{...}` in its
+# shell-command. Bound directly, a picker is handed the eleven literal characters
+# `#{pane_id}`, the capture fails, and the popup opens and shuts — which is what
+# pressing the key looks like: nothing. Both new keys could reintroduce it
+# verbatim, so both are checked.
+#
+# HOW IT IS DRIVEN: a scratch server on its own socket sources this checkout's
+# tmux.conf; a client is attached through a pty, because a popup without a client
+# runs nothing and returns 0, which looks exactly like a pass; the bound command
+# is read back out with list-keys, written to a file and sourced, so tmux
+# re-parses its own output and no shell mangles the nested quoting; and HOME
+# points at a fixture whose .local/bin holds the stubs, so the path written in
+# the conf is exercised rather than substituted.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONF="$(cd -P "$HERE/../../../tmux" && pwd)/.tmux.conf"
+[ -f "$CONF" ] || { echo "cannot find tmux.conf at $CONF"; exit 1; }
+command -v script >/dev/null 2>&1 || { echo "SKIP: no script(1) to make a pty with"; exit 0; }
+
+SOCK="picker-bindings-$$-$RANDOM"
+T() { tmux -L "$SOCK" "$@"; }
+
+WORK="$(mktemp -d)"
+FAKE_HOME="$WORK/home"
+GOT="$WORK/received"
+CMDFILE="$WORK/bound.tmux"
+mkdir -p "$FAKE_HOME/.local/bin"
+ln -s "$HOME/.tmux" "$FAKE_HOME/.tmux" 2>/dev/null
+
+for prog in tmux-open-md tmux-open-path; do
+  cat > "$FAKE_HOME/.local/bin/$prog" <<STUBEOF
+#!/bin/sh
+# Records baked in, not passed through the environment: the popup is spawned by
+# the tmux SERVER, which never sees a variable exported beside a client command.
+printf '%s' "\$1" > "$GOT"
+STUBEOF
+  chmod +x "$FAKE_HOME/.local/bin/$prog"
+done
+
+# fzf and nvim are STUBBED so the wiring can be driven end to end without a human
+# at a picker and without an editor starting. fzf takes the first candidate;
+# nvim records nothing and just holds the window open.
+STUBS="$WORK/stubs"; mkdir -p "$STUBS"
+cat > "$STUBS/fzf" <<'STUBEOF'
+#!/bin/sh
+# --expect makes real fzf print the pressed key on its own first line; the
+# callers parse that, so the stub has to produce it too or the selection lands
+# one line out.
+for a in "$@"; do case "$a" in --expect*) printf '\n' ;; esac; done
+head -1
+STUBEOF
+cat > "$STUBS/nvim" <<'STUBEOF'
+#!/bin/sh
+sleep 600
+STUBEOF
+chmod +x "$STUBS/fzf" "$STUBS/nvim"
+
+CLIENT_PID=""
+cleanup() {
+  [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
+  T kill-server 2>/dev/null
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+PASS=0
+FAIL=0
+ok()  { PASS=$((PASS + 1)); }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "$2"; }
+
+until_ok() { # <seconds> <command...>
+  local deadline=$(( $(date +%s) + $1 )); shift
+  while [ "$(date +%s)" -lt "$deadline" ]; do "$@" && return 0; sleep 0.1; done
+  return 1
+}
+have_client() { [ "$(T list-clients 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; }
+have_record() { [ -s "$GOT" ]; }
+
+# The stubs must be on the SERVER's PATH too: the window tmux-edit creates is
+# spawned by the server, so that is whose PATH decides which `nvim` runs.
+HOME="$FAKE_HOME" PATH="$STUBS:$PATH" T -f "$CONF" new-session -d -s s1 -x 80 -y 24 'sleep 600' \
+  || { echo "could not start scratch server"; exit 1; }
+
+script -q /dev/null tmux -L "$SOCK" attach -t s1 >/dev/null 2>&1 &
+CLIENT_PID=$!
+until_ok 10 have_client || { echo "SKIP: no client attached; a popup cannot run without one"; exit 0; }
+
+press() { # <key>  -> records into $GOT
+  local key="$1" raw
+  raw="$(T list-keys -T prefix | grep -E "^bind-key[[:space:]]+-T prefix[[:space:]]+$key[[:space:]]")"
+  [ -n "$raw" ] || { bad "prefix+$key is bound at all" "no 'bind $key' found in $CONF"; return 1; }
+  raw="${raw#*bind-key}"; raw="${raw#*-T prefix}"; raw="${raw#*$key}"
+  printf '%s\n' "$raw" > "$CMDFILE"
+  rm -f "$GOT"
+  T source-file "$CMDFILE" 2>/dev/null
+  until_ok 10 have_record
+}
+
+check_key() { # <key> <what it opens>
+  local key="$1" what="$2" pane received
+  pane="$(T list-panes -t s1 -F '#{pane_id}' -f '#{pane_active}')"
+  if ! press "$key"; then
+    bad "prefix+$key reaches the $what picker" "the stub was never invoked — the popup command died first"
+    bad "prefix+$key hands over the pane the key was pressed in" "nothing was delivered"
+    bad "prefix+$key hands over an id tmux can address" "nothing was delivered"
+    return
+  fi
+  received="$(cat "$GOT")"
+  case "$received" in
+    %[0-9]*) ok ;;
+    *) bad "prefix+$key hands the $what picker a real pane id" \
+           "got [$received] — an unexpanded format means nothing substituted it" ;;
+  esac
+  if [ "$received" = "$pane" ]; then ok
+  else bad "prefix+$key hands over the pane the key was pressed in" "want [$pane] got [$received]"; fi
+  if T capture-pane -p -t "$received" >/dev/null 2>&1; then ok
+  else bad "prefix+$key hands over an id tmux can address" \
+           "capture-pane rejected [$received], which is exactly how the outage began"; fi
+}
+
+check_key m "markdown"
+check_key g "path"
+
+# It must FOLLOW the active pane. A binding resolving to "the session" or "the
+# first pane" passes everything above with one pane on screen and is wrong the
+# moment the window is split, which is most of the time.
+FIRST="$(T list-panes -t s1 -F '#{pane_id}' -f '#{pane_active}')"
+T split-window -t s1 -d 'sleep 600' >/dev/null 2>&1
+SECOND="$(T list-panes -t s1 -F '#{pane_id}' | grep -v "^$FIRST$" | head -1)"
+T select-pane -t "$SECOND"
+for key in m g; do
+  if press "$key"; then
+    received="$(cat "$GOT")"
+    if [ "$received" = "$SECOND" ]; then ok
+    else bad "with the window split, prefix+$key follows the active pane" \
+             "made [$SECOND] active, picker got [$received]"; fi
+  else
+    bad "with the window split, prefix+$key still runs" "the stub was never invoked"
+  fi
+done
+T select-pane -t "$FIRST"
+
+# --------------------------------------------------------------------------
+# And when there is nothing to offer, each must say so rather than vanish. These
+# drive the real scripts against a directory with no markdown and a pane with no
+# paths — the ordinary case, and the one whose silent death made prefix+u look
+# like a broken key.
+# --------------------------------------------------------------------------
+export TMUX="$(T display-message -p '#{socket_path}'),$(T display-message -p '#{pid}'),0"
+EMPTY="$WORK/empty"; mkdir -p "$EMPTY"
+
+# A pane whose DIRECTORY is empty. The pickers read the pane's path, not the
+# caller's cwd, so a pane sitting in this repo finds plenty of markdown, opens
+# fzf and blocks the run forever — which is how this was first written.
+T new-session -d -s bare -c "$EMPTY" -x 80 -y 24 'sleep 600'
+PANE="$(T list-panes -t bare -F '#{pane_id}' | head -1)"
+
+out="$(TMPDIR="$EMPTY" TMUX_OPEN_MD_ROOTS="$EMPTY/none" "$HERE/tmux-open-md" "$PANE" 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qi 'no markdown'; then ok
+else bad "the markdown picker says when there is nothing to show" "exit $rc, output [$out]"; fi
+
+out="$("$HERE/tmux-open-path" "$PANE" 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qi 'no file paths'; then ok
+else bad "the path picker says when there is nothing to show" "exit $rc, output [$out]"; fi
+
+out="$("$HERE/tmux-open-md" '#{pane_id}' 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'cannot read pane'; then ok
+else bad "the markdown picker reports an unreadable pane" "exit $rc, output [$out]"; fi
+
+out="$("$HERE/tmux-open-path" '#{pane_id}' 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'cannot read pane'; then ok
+else bad "the path picker reports an unreadable pane" "exit $rc, output [$out]"; fi
+
+# --------------------------------------------------------------------------
+# END TO END, which is the only place the wiring between a picker and tmux-edit
+# is exercised. Everything above proves the pane id arrives and the lists are
+# right; nothing above proves that choosing something opens it. A picker that
+# read the wrong column would pass every other case in this repo.
+# --------------------------------------------------------------------------
+# PHYSICAL path, because tmux-edit records the physical one and mktemp hands out
+# a path through a symlink — on macOS /var is /private/var, so comparing the two
+# spellings fails while everything actually works.
+mkdir -p "$WORK/fixture/src"; FIX="$(cd -P "$WORK/fixture" && pwd)"
+printf '# hello\n' > "$FIX/notes.md"
+printf 'x\n' > "$FIX/src/main.ts"
+
+win_for() { T list-windows -a -F '#{window_id} #{@edit_file}' | awk -v f="$1" '{ id=$1; $1=""; sub(/^ /,""); if ($0==f) print id }'; }
+
+T new-session -d -s pick -c "$FIX" -x 80 -y 24 'sleep 600'
+MDPANE="$(T list-panes -t pick -F '#{pane_id}' | head -1)"
+TMPDIR="$EMPTY" TMUX_OPEN_MD_ROOTS="$EMPTY/none" PATH="$STUBS:$PATH" \
+  "$HERE/tmux-open-md" "$MDPANE" >/dev/null 2>&1 </dev/null
+if until_ok 8 test -n "$(win_for "$FIX/notes.md")"; then ok
+else bad "choosing a markdown file opens it" \
+         "no window carries it; windows are [$(T list-windows -a -F '#{window_name}=#{@edit_file}' | tr '\n' '|')]"; fi
+
+# A pane with a path printed in it, which is the whole input to prefix+g.
+# The pane id comes straight from new-window. Searching for it by directory
+# picks the wrong one: the markdown case above has already opened a window whose
+# directory is this same fixture, so "the last pane in this fixture" is an editor
+# window rather than the one with the output in it.
+PATHPANE="$(T new-window -t pick -d -P -F '#{pane_id}' -c "$FIX" "printf 'ERROR in src/main.ts:4\n'; sleep 600")"
+sleep 0.6
+PATH="$STUBS:$PATH" "$HERE/tmux-open-path" "$PATHPANE" >/dev/null 2>&1 </dev/null
+if until_ok 8 test -n "$(win_for "$FIX/src/main.ts")"; then ok
+else bad "choosing a path from the pane opens it" \
+         "no window carries it; windows are [$(T list-windows -a -F '#{window_name}=#{@edit_file}' | tr '\n' '|')]"; fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]
