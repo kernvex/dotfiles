@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Tests for tmux-picker-lib.sh — the plumbing the popup pickers share.
+#
+#   ./test-tmux-picker-lib     exit 0 = pass
+#
+# The one behaviour here worth its own file is the LAST-RESORT MESSAGE. A picker
+# runs inside a popup, so a script that dies without printing takes the box with
+# it and the key looks broken. That has now happened three times in this feature
+# for three unrelated reasons — grep matching nothing, display-message returning
+# empty, and find refusing a directory — each found by a person pressing a key
+# rather than by a test.
+#
+# So the last line of defence is not another specific guard: it is that ANY
+# non-zero exit which has not already explained itself says something. These
+# drive that mechanism through small scripts that source the library, rather than
+# through the pickers, so the behaviour is pinned independently of them.
+set -uo pipefail
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB="$HERE/tmux-picker-lib.sh"
+[ -r "$LIB" ] || { echo "cannot find tmux-picker-lib.sh beside this test"; exit 1; }
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+PASS=0
+FAIL=0
+ok()  { PASS=$((PASS + 1)); }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "$2"; }
+
+# <name> <body>  -> writes a script that sources the library and runs <body>
+subject() {
+  cat > "$WORK/$1" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+. "$LIB"
+picker_explain_unexpected_exit
+$2
+EOF
+  chmod +x "$WORK/$1"
+}
+
+# The case that has actually happened, three times: something returns non-zero
+# under set -e and the script stops where it stands, with nothing on screen.
+subject silent 'false'
+out="$("$WORK/silent" 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -ne 0 ] && [ -n "$out" ]; then ok
+else bad "a script that dies without explaining itself still says something" \
+         "exit $rc, output [$out] — this is the silent popup, again"; fi
+
+# It must name the script, since the message is all the user gets and "something
+# failed" does not tell them which key they pressed.
+if printf '%s' "$out" | grep -q 'silent'; then ok
+else bad "the message names the script that failed" "output [$out]"; fi
+
+# A failure that ALREADY explained itself must not be explained twice.
+subject explained 'picker_fail "no markdown in this folder"'
+out="$("$WORK/explained" 2>&1 </dev/null)"; rc=$?
+count="$(printf '%s' "$out" | grep -c 'no markdown' || true)"
+if [ "$rc" -ne 0 ] && [ "$count" -eq 1 ]; then ok
+else bad "an explained failure is not reported a second time" \
+         "exit $rc, saw the message $count times: [$out]"; fi
+
+if printf '%s' "$out" | grep -qi 'unexpected'; then
+  bad "an explained failure does not also print the last-resort message" "output [$out]"
+else ok; fi
+
+# Success must stay quiet. A trap that fires on the way out of a normal run would
+# make every successful pick print noise into the popup as it closes.
+subject fine 'exit 0'
+out="$("$WORK/fine" 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then ok
+else bad "a successful run prints nothing extra" "exit $rc, output [$out]"; fi
+
+# Declining the picker is a success, not a failure: fzf exits 130 on Escape and 1
+# on an empty selection, and neither is worth a word.
+subject declined 'picker_triage_fzf 130'
+out="$("$WORK/declined" 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then ok
+else bad "pressing Escape leaves quietly" "exit $rc, output [$out]"; fi
+
+subject missing 'picker_triage_fzf 127'
+out="$("$WORK/missing" 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi 'fzf is not installed'; then ok
+else bad "a missing picker is named" "exit $rc, output [$out]"; fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

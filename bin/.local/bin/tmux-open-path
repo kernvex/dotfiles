@@ -167,14 +167,20 @@ pane="${1:-}"
 # shellcheck source=./tmux-picker-lib.sh
 . "$(cd -P "$(dirname "$0")" && pwd)/tmux-picker-lib.sh"
 
+# From here on, no exit is silent. Everything that knows why it is stopping calls
+# picker_fail; anything else is reported by this rather than closing the popup
+# with nothing on screen.
+picker_explain_unexpected_exit
+
 if ! dir="$(picker_pane_dir "$pane")"; then
-  printf '%s' "$dir"; picker_hold; exit 1
+  picker_fail "$dir"
 fi
 
 # -J joins wrapped lines, so a path broken across the pane width survives as one
 # string. No -e: escape sequences would otherwise land in the middle of a match.
 if ! raw="$(tmux capture-pane -p -J -S "-$DEPTH" -t "$pane" 2>&1)"; then
-  printf 'cannot read pane %s\n%s\n' "$pane" "$raw"; picker_hold; exit 1
+  picker_fail "cannot read pane $pane
+$raw"
 fi
 
 candidates_out="$(printf '%s\n' "$raw" | extract "$dir")"
@@ -210,5 +216,6 @@ if [ "$key" = "ctrl-y" ]; then
 fi
 
 if ! out="$(tmux-edit -t "$pane" "$file" ${line:+"$line"} 2>&1)"; then
-  printf 'could not open %s\n%s\n' "$file" "$out"; picker_hold; exit 1
+  picker_fail "could not open $file
+$out"
 fi

@@ -72,6 +72,8 @@ CLIENT_PID=""
 cleanup() {
   [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
   T kill-server 2>/dev/null
+  # The unreadable fixture has to be readable again or it cannot be removed.
+  chmod -R u+rwX "$WORK" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -256,6 +258,36 @@ else bad "ctrl-y copies the absolute path" \
 # And copying must not also open it — the two verbs are alternatives.
 if [ -z "$(T list-windows -a -F '#{window_id} #{@edit_file}' | awk -v f="$FIX/src/main.ts" '{ sp=index($0," "); if (substr($0,sp+1)==f) print $1 }' | sed -n '2p')" ]; then ok
 else bad "ctrl-y copies instead of opening" "a second window was opened for the same file"; fi
+
+# A TEMP DIRECTORY WITH A DOOR THAT DOES NOT OPEN, driven through the whole
+# picker rather than through --list. This is the shape of a real $TMPDIR on
+# macOS, where the system denies access to several paths under it, and `find`
+# reports failure for the whole walk having searched everything else perfectly
+# well. Under pipefail that status reached the assignment and `set -e` killed the
+# script before it printed anything: prefix+m opened a popup and shut it.
+#
+# Every other fixture in this repo is readable by construction, which is exactly
+# why nothing caught it. It is asserted end to end — exiting 0 is not enough, the
+# file has to actually open — because "it did not crash" was never the promise.
+mkdir -p "$WORK/tmpish/locked/inner" "$WORK/readable"
+printf '# reachable\n' > "$WORK/readable/reachable.md"
+printf '# buried\n' > "$WORK/tmpish/locked/inner/buried.md"
+chmod 000 "$WORK/tmpish/locked"
+READABLE="$(cd -P "$WORK/readable" && pwd)"
+
+T new-session -d -s denied -c "$READABLE" -x 80 -y 24 'sleep 600'
+DENIEDPANE="$(T list-panes -t denied -F '#{pane_id}' | head -1)"
+out="$(TMPDIR="$WORK/tmpish" TMUX_OPEN_MD_ROOTS="$EMPTY/none" PATH="$STUBS:$PATH" \
+  "$HERE/tmux-open-md" "$DENIEDPANE" 2>&1 </dev/null)"; rc=$?
+if [ "$rc" -eq 0 ]; then ok
+else bad "a temp directory the walk cannot fully enter does not kill the picker" \
+         "exit $rc, output [$out]"; fi
+
+if until_ok 8 test -n "$(win_for "$READABLE/reachable.md")"; then ok
+else bad "and the file that IS reachable still opens" \
+         "no window carries it; windows are [$(T list-windows -a -F '#{window_name}=#{@edit_file}' | tr '\n' '|')]"; fi
+
+chmod 755 "$WORK/tmpish/locked"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

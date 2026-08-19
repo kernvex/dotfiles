@@ -17,7 +17,9 @@ SUT="$HERE/tmux-open-md"
 [ -x "$SUT" ] || { echo "cannot find tmux-open-md beside this test"; exit 1; }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# The unreadable fixture below has to be made readable again or the cleanup
+# cannot remove it.
+trap 'chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 ROOT="$(cd -P "$WORK" && pwd)"
 
 PASS=0
@@ -111,6 +113,36 @@ docs/guide.md" \
 same "a file found under two roots is listed once" \
   "1" \
   "$("$SUT" --list "$ROOT/proj" "$ROOT/proj/docs" 2>/dev/null | cut -f2 | grep -c "/docs/guide.md$")"
+
+# A DIRECTORY THE WALK CANNOT ENTER. This is the ordinary state of a real temp
+# directory on macOS, where the system denies access to a handful of paths under
+# $TMPDIR, and `find` reports a non-zero status when it hits one — even though it
+# searched everything else perfectly well.
+#
+# Under `set -o pipefail` that status flows out of the whole pipeline, and under
+# `set -e` it kills the script at the assignment, before it can show anything.
+# The popup opens and shuts: the third appearance of that failure in this repo,
+# after grep-found-nothing and display-message-returned-empty. ADR 0003 records
+# the same hazard for the sessionizer's walk.
+#
+# Fixtures are readable by construction, which is exactly why no test saw it.
+mkdir -p "$ROOT/proj/locked/inner"
+printf 'x\n' > "$ROOT/proj/locked/inner/buried.md"
+# Backdated so it cannot displace the newest-first cases above once the
+# directory is readable again.
+touch -t 200001010000 "$ROOT/proj/locked/inner/buried.md"
+chmod 000 "$ROOT/proj/locked"
+
+out="$("$SUT" --list "$ROOT/proj" 2>/dev/null)"; rc=$?
+if [ "$rc" -eq 0 ]; then ok
+else bad "a root containing an unreadable directory still succeeds" \
+         "exit $rc — a walk that cannot enter one directory must not take the picker down"; fi
+
+if printf '%s' "$out" | grep -q 'README.md'; then ok
+else bad "the readable files are still listed when one directory is unreadable" \
+         "got [$(printf '%s' "$out" | cut -f1 | tr '\n' ' ')]"; fi
+
+chmod 755 "$ROOT/proj/locked"
 
 # EXIT STATUS IS ASSERTED on the empty cases. A picker whose list is empty is an
 # ordinary Tuesday, and the script that dies on it takes the popup with it — the

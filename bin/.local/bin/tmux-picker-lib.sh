@@ -49,6 +49,41 @@ picker_preview_command() { # <field>  ->  a command string for --preview
   fi
 }
 
+# ---------------------------------------------------------------------------
+# SAYING SOMETHING, ALWAYS.
+#
+# A picker runs inside a popup, so a script that dies without printing takes the
+# box down with it and the key simply looks broken. That has happened three times
+# in this feature, for three unrelated reasons — `grep` matching nothing,
+# `display-message` returning empty, `find` refusing a directory — and each was
+# found by a person pressing a key rather than by a test.
+#
+# The specific guards for those three are all in place. This is the different
+# kind of defence: whatever the FOURTH reason turns out to be, it will announce
+# itself instead of vanishing. It cannot prevent the bug; it converts it from
+# invisible into reported, which is the difference between "the key is broken"
+# and a line naming the script and its exit status.
+_PICKER_EXPLAINED=0
+
+# Fail with a reason the user can read. Everything that knows why it is stopping
+# should come through here, so the last-resort trap below stays silent for it.
+picker_fail() { # <message...>
+  _PICKER_EXPLAINED=1
+  printf '%s\n' "$*"
+  picker_hold
+  exit 1
+}
+
+_picker_on_exit() { # <status>
+  [ "$1" -eq 0 ] && return 0
+  [ "${_PICKER_EXPLAINED:-0}" -eq 1 ] && return 0
+  printf '%s exited %s with nothing to show for it — this is a bug in the picker, not in your files\n' \
+    "${0##*/}" "$1"
+  picker_hold
+}
+
+picker_explain_unexpected_exit() { trap '_picker_on_exit $?' EXIT; }
+
 # fzf's exit status, TRIAGED rather than blanket-ignored. A bare `|| exit 0`
 # reads "the user pressed Escape" into every possible failure, including fzf
 # being absent — and a popup that exits 0 for that is a box that opens and shuts
@@ -59,7 +94,7 @@ picker_triage_fzf() { # <exit status>  ->  0 to continue, or exits
   case "$1" in
     0)     return 0 ;;
     1|130) exit 0 ;;
-    127)   echo "fzf is not installed, so there is nothing to pick with"; picker_hold; exit 1 ;;
-    *)     printf 'the picker failed (exit %s)\n' "$1"; picker_hold; exit 1 ;;
+    127)   picker_fail "fzf is not installed, so there is nothing to pick with" ;;
+    *)     picker_fail "the picker failed (exit $1)" ;;
   esac
 }

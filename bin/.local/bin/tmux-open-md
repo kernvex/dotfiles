@@ -47,7 +47,17 @@ candidates() { # <root>...  ->  mtime \t display \t abspath
     # -exec ... {} + rather than a pipe into xargs: BSD xargs runs its command
     # once even on empty input, which would turn "no markdown here" into a stat
     # error inside the popup.
-    find "$phys" \( "${PRUNE[@]}" \) -prune -o -type f -name '*.md' -exec "${STAT_CMD[@]}" {} + 2>/dev/null \
+    #
+    # `|| true` BECAUSE A PARTIAL WALK IS STILL A GOOD WALK. `find` returns
+    # non-zero when it could not enter a directory, which on macOS is the
+    # ordinary state of $TMPDIR — the system denies a handful of paths under it,
+    # and the walk reports failure having searched everything else perfectly
+    # well. Under `set -o pipefail` that status flows out of the whole pipeline
+    # and `set -e` then kills the script at the assignment, before it can print
+    # anything: the popup opens and shuts. ADR 0003 records the same hazard for
+    # the sessionizer's walk; the errors themselves are already discarded above,
+    # and an unreadable subtree is never actionable for a picker.
+    { find "$phys" \( "${PRUNE[@]}" \) -prune -o -type f -name '*.md' -exec "${STAT_CMD[@]}" {} + 2>/dev/null || true; } \
       | while IFS=' ' read -r mtime path; do
           [ -n "${path:-}" ] || continue
           printf '%s\t%s\t%s\n' "$mtime" "${path#"$phys"/}" "$path"
@@ -116,8 +126,13 @@ pane="${1:-}"
 # shellcheck source=./tmux-picker-lib.sh
 . "$(cd -P "$(dirname "$0")" && pwd)/tmux-picker-lib.sh"
 
+# From here on, no exit is silent. Everything that knows why it is stopping calls
+# picker_fail; anything else is reported by this rather than closing the popup
+# with nothing on screen.
+picker_explain_unexpected_exit
+
 if ! dir="$(picker_pane_dir "$pane")"; then
-  printf '%s' "$dir"; picker_hold; exit 1
+  picker_fail "$dir"
 fi
 
 # ONE ROOT PER LINE INTO AN ARRAY, never an unquoted command substitution. A
@@ -156,5 +171,6 @@ file="$(printf '%s' "$selection" | cut -f2)"
 [ -n "$file" ] || exit 0
 
 if ! out="$(tmux-edit -t "$pane" "$file" 2>&1)"; then
-  printf 'could not open %s\n%s\n' "$file" "$out"; picker_hold; exit 1
+  picker_fail "could not open $file
+$out"
 fi
