@@ -70,10 +70,14 @@ def paint(code, text):
 
 DIM, BOLD = "2", "1"
 RED, YELLOW, GREEN, CYAN = "31", "33", "32", "36"
-# Basic ANSI throughout, so the terminal theme picks the hue. Bright blue rather
-# than blue because under Gruvbox the plain `36` used for the branch renders
-# green (#689d6a) and `34` is muddy next to DIM.
-BLUE = "94"
+# Basic ANSI throughout, so the terminal theme picks the hue.
+#
+# Verified is magenta, and was bright blue until `94` turned out to render
+# indistinguishably from DIM in this theme — so the state meaning "checked, and
+# correct" looked exactly like "nothing to say". A signal that cannot be seen is
+# not a signal. The evidence, the rejected candidates and the general lesson are
+# in docs/adr/0014; run seat-colour-swatch.sh after any theme change.
+MAGENTA = "95"
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -237,11 +241,11 @@ SEAT_GLYPH = "◈"
 #   mismatch     RED     I know this is wrong.
 #   unverifiable YELLOW  I cannot check, and you're carrying a seat that isn't yours.
 #   neutral      DIM     Nothing to say.
-# which leaves BLUE meaning one thing only: a comparison ran and passed. If blue
+# which leaves MAGENTA meaning one thing only: a comparison ran and passed. If it
 # also meant "no comparison happened" you could not tell a verified seat from an
 # unverified one at a glance.
 SEAT_COLORS = {
-    "verified": BLUE,
+    "verified": MAGENTA,
     "mismatch": RED,
     "unverifiable": YELLOW,
     "neutral": DIM,

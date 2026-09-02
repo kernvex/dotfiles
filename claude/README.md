@@ -1,11 +1,12 @@
 # claude
 
-Claude Code config worth version-controlling. Two files, handled differently
-because Claude Code writes one of them and not the other.
+Claude Code config worth version-controlling, handled differently per file
+because Claude Code writes one of them and not the others.
 
 | file | how it reaches `~/.claude` | why |
 |---|---|---|
 | `.claude/statusline-pace.py` | **symlink** (stowed) | Your script; Claude never writes it, so a live symlink is safe and bidirectional |
+| `.claude/seat-colour-swatch.sh` | **symlink** (stowed) | Prints the seat states for a human to compare — the half of the palette check no test can do (ADR 0014) |
 | `.claude/settings.json` | **copy** (by `./install`) | Claude *atomically rewrites* it — see below |
 
 `statusline-pace.py` renders the status line: context window + plan burn-rate,

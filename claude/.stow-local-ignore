@@ -1,4 +1,5 @@
-# stow should link ONLY statusline-pace.py from this package.
+# stow links two files from this package: statusline-pace.py and
+# seat-colour-swatch.sh. Everything below is excluded, for the reasons given.
 #
 # settings.json is COPY-managed by ./install, not stowed: Claude Code atomically
 # rewrites ~/.claude/settings.json (temp file + rename) on /model, /config, etc.,

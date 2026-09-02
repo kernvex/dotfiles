@@ -1,5 +1,10 @@
 # The status line reads the Claude seat from its config file, not from `claude auth status`
 
+> **Superseded in part by ADR 0014.** The colour named below is no longer bright blue: `94`
+> and `DIM` render alike in this machine's theme, so the verified state was unreadable for as
+> long as it existed. The *meaning* fixed here — that one colour means a comparison ran and
+> passed — is unchanged and still holds; only the hue moved, to magenta.
+
 The status line names the Claude seat answering a session and colours it by
 whether that account agrees with the folder's git identity. Getting the account
 needs a source, and there are two.

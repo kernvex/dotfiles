@@ -19,6 +19,7 @@ Usage:  python3 test-statusline-seat.py         (exit 0 = all passed)
 Spec: docs/superpowers/specs/2026-08-03-claude-seat-statusline-design.md
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -30,8 +31,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATUSLINE = os.path.join(HERE, "statusline-pace.py")
 REPO = os.path.realpath(os.path.join(HERE, "..", ".."))
 
-DIM, RED, YELLOW, BLUE = "2", "31", "33", "94"
-NAMES = {DIM: "dim", RED: "red", YELLOW: "yellow", BLUE: "blue"}
+
+def _statusline_module():
+    """The status line imported as a module, for its palette only.
+
+    Every assertion below still goes through the real process boundary; this is
+    read-only access to SEAT_COLORS so the palette has ONE home. Restating the
+    codes here was how the table came to assert its own expectations, since an
+    expected colour copied out of the source passes whatever the source says.
+    """
+    spec = importlib.util.spec_from_file_location("statusline_pace", STATUSLINE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SL = _statusline_module()
+SEAT_COLORS = SL.SEAT_COLORS
+# escape code -> the constant's name, so failures read as a colour not a number.
+CODE_NAMES = {v: k for k, v in vars(SL).items()
+              if isinstance(v, str) and k.isupper() and v.isdigit()}
 
 # The seat segment is the first thing on line two: ESC[<code>m ◈ <label> ESC[0m
 SEAT_RE = re.compile(r"\x1b\[(\d+)m◈ ([^\x1b]*)\x1b\[0m")
@@ -141,6 +160,30 @@ def default_seat_resolves_its_account():
     return True, "resolved an account rather than the directory fallback"
 
 
+def state_colors_are_distinct():
+    """No two seat states may share an escape CODE.
+
+    Reads resolved values, not constant names. The first version of this
+    compared identifiers, so binding one constant to another's code — say the
+    verified colour to `2` — left four distinct names and it passed green,
+    asserting only that four names are four names, which they always are.
+
+    This is the weak half of a guarantee, and the strong half cannot be
+    automated: the verified state moved off bright blue because `94` and `2` are
+    DIFFERENT codes that this terminal theme renders as the SAME colour, and no
+    assertion here can see a rendered pixel. `seat-colour-swatch.sh` is that
+    check and it needs a human. See docs/adr/0014.
+    """
+    states = ("verified", "mismatch", "unverifiable", "neutral")
+    missing = [st for st in states if st not in SEAT_COLORS]
+    if missing:
+        return False, f"the status line has no colour for {missing}"
+    codes = {st: SEAT_COLORS[st] for st in states}
+    if len(set(codes.values())) != len(codes):
+        return False, f"two states share a colour code: {codes}"
+    return True, ", ".join(f"{st}={CODE_NAMES.get(c, '?')}({c})" for st, c in codes.items())
+
+
 # --- the table --------------------------------------------------------------
 
 
@@ -161,33 +204,45 @@ def main():
         other = make_seat(tmp, ".claude-b-person-company", "someone.else@example.invalid")
         accountless = make_seat(tmp, ".claude-c-person-company", None)
 
+        # Each row names the STATE the scenario must produce; the colour is
+        # looked up from the status line's own palette. So a hue change is one
+        # edit there, and this table goes on asserting behaviour rather than
+        # re-stating the value it is supposed to be checking.
         cases = [
-            ("routed   + seat matches      ", repo,        matching,    BLUE),
-            ("routed   + seat differs      ", repo,        other,       RED),
-            ("routed   + seat has no acct  ", repo,        accountless, YELLOW),
-            ("unrouted + default seat      ", REPO,        None,        DIM),
-            ("unrouted + named seat        ", REPO,        other,       RED),
-            ("no repo  + default seat      ", not_a_repo,  None,        DIM),
-            ("no repo  + named seat        ", not_a_repo,  other,       YELLOW),
+            ("routed   + seat matches      ", repo,        matching,    "verified"),
+            ("routed   + seat differs      ", repo,        other,       "mismatch"),
+            ("routed   + seat has no acct  ", repo,        accountless, "unverifiable"),
+            ("unrouted + default seat      ", REPO,        None,        "neutral"),
+            ("unrouted + named seat        ", REPO,        other,       "mismatch"),
+            ("no repo  + default seat      ", not_a_repo,  None,        "neutral"),
+            ("no repo  + named seat        ", not_a_repo,  other,       "unverifiable"),
         ]
 
         print(f"statusline : {STATUSLINE}")
         print(f"routed repo: {'<found>' if repo else 'NOT FOUND - routed rows skip'}")
         print(f"default dir: {default_dir}\n")
 
-        for label, cwd, seat, expected in cases:
+        for label, cwd, seat, expected_state in cases:
             if cwd is None or (seat is None and "named" in label):
                 skipped.append(label)
                 print(f"  SKIP  {label}  (no routed repo on this machine)")
                 continue
+            expected = SEAT_COLORS[expected_state]
             got = seat_colour(cwd, seat)
             ran += 1
             ok = got == expected
             mark = "ok  " if ok else "FAIL"
-            print(f"  {mark}  {label}  expected {NAMES[expected]:<6} "
-                  f"got {NAMES.get(got, repr(got))}")
+            print(f"  {mark}  {label}  expected {expected_state:<12} "
+                  f"got {CODE_NAMES.get(got, repr(got)).lower()}")
             if not ok:
                 failures.append(label)
+
+    print("\n  -- the palette itself --")
+    ok, why = state_colors_are_distinct()
+    ran += 1
+    print(f"  {'ok  ' if ok else 'FAIL'}  every state has its own code          {why}")
+    if not ok:
+        failures.append("state colours are distinct")
 
     print("\n  -- label, not just colour --")
     ok, why = default_seat_resolves_its_account()
