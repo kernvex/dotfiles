@@ -41,13 +41,19 @@ meanings. Every alternative collided with something already spoken for:
 The *meaning* of the colour is unchanged from ADR 0007: a comparison ran and
 passed. Only the hue moves.
 
-**Consequence — the suite cannot protect this.** `test-statusline-seat.py` now
-asserts that no two states share an escape code, which is the weak half of the
-guarantee and the only half that can be automated. The failure this record exists
-to describe was two *different* codes rendering as the *same* colour, and no
-assertion can see a rendered pixel. `seat-colour-swatch.sh` prints the four states
-together for a human to check, and it is the real test. Run it after any theme
-change.
+**Consequence — the suite protects one half, and only one.** The states live in a
+table (`SEAT_STATES`) where each row carries its colour, its badge, and what that
+colour *asserts*. The rule is expressible from that: two states may share a colour
+exactly when they assert the same thing, and when they do, a badge must tell them
+apart. `verified` and `overridden` are the standing case — both say the seat
+answering is the one meant to answer, one by routing and one by declaration.
+`test-statusline-seat.py` derives the check from the table rather than restating
+it, so a state added later is checked without anyone remembering to.
+
+That is still the weak half. The failure this record exists to describe was two
+*different* codes rendering as the *same* colour, and no assertion can see a
+rendered pixel. `seat-colour-swatch.sh` prints every state together for a human,
+and it is the real test. Run it after any theme change.
 
 **Consequence — a colour is a claim about a person's eyes, not about a file.**
 The palette in `statusline-pace.py` is written as though picking hues were a

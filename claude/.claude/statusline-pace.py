@@ -237,19 +237,49 @@ def render_sys():
 
 SEAT_GLYPH = "◈"
 
-# state -> colour. Three signals, three meanings, held to strictly:
-#   mismatch     RED     I know this is wrong.
-#   unverifiable YELLOW  I cannot check, and you're carrying a seat that isn't yours.
-#   neutral      DIM     Nothing to say.
-# which leaves MAGENTA meaning one thing only: a comparison ran and passed. If it
-# also meant "no comparison happened" you could not tell a verified seat from an
-# unverified one at a glance.
-SEAT_COLORS = {
-    "verified": MAGENTA,
-    "mismatch": RED,
-    "unverifiable": YELLOW,
-    "neutral": DIM,
+# Every verdict the seat segment can reach, and how each one renders.
+#
+# One row per verdict, so a new verdict is a row here plus the branch that
+# returns it. It used to be five edits in three files — the colour map, the label
+# append, the swatch's special case, and a list in the test — and four of those
+# were places you could forget.
+#
+#   colour  the escape code
+#   badge   a word appended to the label, or None
+#   asserts what the colour is CLAIMING, as one of the constants below. Two
+#           states may share a colour exactly when they assert the same claim,
+#           and must not otherwise.
+#
+# The claims are NAMES, not the sentences they hold. Grouping on the prose would
+# mean that rewording one of two matching strings silently splits the group, and
+# from then on divergent colours pass green — the failure ADR 0014 exists to
+# prevent, reached through the key instead of the code. A typo in a name is a
+# NameError; a typo in a sentence is a bug that waits.
+CLAIM_INTENDED = "the seat answering is the intended one"
+CLAIM_WRONG = "I know this is wrong"
+CLAIM_UNCHECKABLE = "I cannot check, and the seat is not the default"
+CLAIM_NOTHING = "nothing to say"
+
+SEAT_STATES = {
+    # `verified` and `overridden` make the same claim — reached by routing in the
+    # first case and by declaration in the second — so they share a colour, and
+    # the badge is what tells them apart.
+    "verified":     {"colour": MAGENTA, "badge": None, "asserts": CLAIM_INTENDED},
+    "overridden":   {"colour": MAGENTA, "badge": "OVERRIDDEN", "asserts": CLAIM_INTENDED},
+    "mismatch":     {"colour": RED, "badge": None, "asserts": CLAIM_WRONG},
+    "unverifiable": {"colour": YELLOW, "badge": None, "asserts": CLAIM_UNCHECKABLE},
+    "neutral":      {"colour": DIM, "badge": None, "asserts": CLAIM_NOTHING},
 }
+
+
+def default_seat_dir():
+    """Where Claude keeps its credentials when nothing is routed.
+
+    Named once: it is both what makes a seat "the default" and what a work
+    folder's assignment is compared against to see whether it displaces
+    anything, and those two had drifted into separate literals.
+    """
+    return os.path.expanduser("~/.claude")
 
 
 def seat_dir():
@@ -271,7 +301,7 @@ def seat_dir():
     keyed to where it points — a directory explicitly set to ~/.claude is still
     the owner's seat, but its config lives at ~/.claude/.claude.json.
     """
-    default = os.path.expanduser("~/.claude")
+    default = default_seat_dir()
     raw = os.environ.get("CLAUDE_CONFIG_DIR")
     if not raw:
         return default, True, os.path.expanduser("~/.claude.json")
@@ -300,8 +330,126 @@ def seat_account(config_file):
     return account.get("emailAddress") or None, tier
 
 
+# The identity tool's generated routing map. Overridable so the test can stand
+# up a synthetic machine; unset it resolves to the real one. Absent is normal —
+# on a machine with no identity tool the seat falls back to the git comparison
+# below, and everything here degrades to what it did before the map existed.
+IDENTITY_MAP = os.environ.get("STATUSLINE_IDENTITY_MAP") or \
+    os.path.expanduser("~/.config/identity/map.json")
+
+# Set by `identity override <tool>` on the process it execs. It carries INTENT
+# and nothing else — which seat is live is observed below, never taken from here.
+OVERRIDE_MARKER = "IDENTITY_SEAT_OVERRIDE"
+
+
+def routing_map():
+    """What `identity apply` generated, or None if there is no identity tool."""
+    try:
+        with open(IDENTITY_MAP, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def owning_identity(cwd, mapping):
+    """The map entry whose work folder CONTAINS cwd — longest match — or None.
+
+    Containment, not a git rule. A work folder is a directory, and its own root
+    holds no repository: anything deciding by `includeIf gitdir:` calls that root
+    unrouted while the folder plainly owns it, which is where the machine owner
+    actually launches Claude for one of these clients.
+    """
+    if not mapping or not cwd:
+        return None
+    try:
+        here = os.path.realpath(cwd)
+    except OSError:
+        return None
+    best = None
+    for ident in mapping.get("identities", []):
+        folder = ident.get("work_folder")
+        if not folder:
+            continue
+        folder = os.path.realpath(os.path.expanduser(folder))
+        if here == folder or here.startswith(folder + os.sep):
+            if best is None or len(folder) > len(best[0]):
+                best = (folder, ident)
+    return best[1] if best else None
+
+
+def assigned_seat(ident):
+    """The store this identity routes Claude to, or None if it routes none.
+
+    Walked one key at a time rather than chained: the map is another tool's
+    output, so any level may be absent on an older or partial one, and a walk
+    that checks as it goes says "routes no seat" where a chain would raise.
+    """
+    node = ident or {}
+    for key in ("tools", "claude", "env", "CLAUDE_CONFIG_DIR"):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node
+
+
+def personal_slug(mapping):
+    """The slug of the identity that is the complement of every work folder."""
+    for ident in (mapping or {}).get("identities", []):
+        if not ident.get("work_folder"):
+            return ident.get("slug")
+    return None
+
+
+def folder_seat_state(config_dir, is_default, seat_email, ident, mapping):
+    """The verdict inside a work folder, decided by the map rather than by git.
+
+    Three cases the git comparison cannot reach, all of them real on this
+    machine: a folder that routes NO seat (the personal one is correct there, by
+    data); a declared override (correct by declaration); and the folder's own
+    root, where there is no repo to compare against at all.
+    """
+    assigned = assigned_seat(ident)
+
+    if assigned is None:
+        # The identity routes git but no seat, so the default seat is the only
+        # one there is. Reporting that as a mismatch was a false alarm, and a red
+        # that cries wolf is a red that stops being read.
+        return "verified" if is_default else "mismatch"
+
+    assigned_dir = os.path.realpath(os.path.expanduser(assigned))
+    # Does this folder route a seat OTHER than the default store? A folder that
+    # assigns the default store displaces nothing, so there is nothing there to
+    # override, and a marker must not be allowed to claim otherwise.
+    displaces = assigned_dir != os.path.realpath(default_seat_dir())
+
+    if is_default:
+        if not displaces:
+            return "verified"
+        # The personal seat inside a folder that routes its own. Deliberate or a
+        # fault — the same observation either way, so only the marker separates
+        # them, and it is believed only while it agrees with what is observed.
+        declared = os.environ.get(OVERRIDE_MARKER)
+        if declared and declared == personal_slug(mapping):
+            return "overridden"
+        return "mismatch"
+
+    if assigned_dir != os.path.realpath(config_dir):
+        return "mismatch"
+
+    # The right STORE is selected. That is not the same as it being logged into
+    # the right account, and the difference is the whole point of the segment: a
+    # routed directory signed into someone else's account is the failure this is
+    # meant to catch, and comparing paths alone would call it verified.
+    expected = (ident or {}).get("email")
+    if not seat_email or not expected:
+        return "unverifiable"
+    return "verified" if seat_email.casefold() == expected.casefold() else "mismatch"
+
+
 def seat_state(is_default, seat_email, git):
-    """Which of the four states this session is in. See SEAT_COLORS."""
+    """The verdict OUTSIDE every declared work folder, and the fallback when
+    there is no routing map at all. See SEAT_STATES; `overridden` is not
+    reachable from here, since nothing outside a work folder displaces a seat."""
     in_repo = bool(git and git.get("branch"))
 
     if not in_repo:
@@ -332,12 +480,30 @@ def seat_label(config_dir, is_default, email, tier):
     return os.path.basename(config_dir).removeprefix(".claude-")
 
 
-def render_seat(git):
-    """(painted segment, colour) for the head of line two."""
+def render_seat(git, cwd):
+    """(painted segment, colour) for the head of line two.
+
+    Inside a work folder the map decides, because it knows two things git cannot:
+    which folders route a seat at all, and where the folder's own root begins.
+    Everywhere else — and on any machine with no identity tool, where the map is
+    simply absent — the git comparison is still the answer.
+    """
     config_dir, is_default, config_file = seat_dir()
     email, tier = seat_account(config_file)
-    color = SEAT_COLORS[seat_state(is_default, email, git)]
+
+    mapping = routing_map()
+    ident = owning_identity(cwd, mapping)
+    state = (folder_seat_state(config_dir, is_default, email, ident, mapping)
+             if ident is not None else seat_state(is_default, email, git))
+
     label = seat_label(config_dir, is_default, email, tier)
+    badge = SEAT_STATES[state]["badge"]
+    if badge:
+        # The colour says the seat is the intended one; the badge says how that
+        # was established. Appended after the account and its tier, which are one
+        # fact about one account and should not be split by a word about routing.
+        label += f" · {badge}"
+    color = SEAT_STATES[state]["colour"]
     return paint(color, f"{SEAT_GLYPH} {label}"), color
 
 
@@ -376,7 +542,7 @@ def render_path(path, repo):
     gives the eye somewhere to land.
 
     Deliberately no colour: every hue in this file already carries a meaning
-    (see SEAT_COLORS), and a second meaning for any of them would cost more than
+    (see SEAT_STATES), and a second meaning for any of them would cost more than
     this is worth. Normal-vs-dim is the one axis still free.
     """
     if not repo:
@@ -485,7 +651,7 @@ def main():
     # Line two: which account is answering, who am I talking to, how hard is it
     # thinking, and where does it stand — path, branch, tree state, identity.
     # The seat leads because it is the fact you cannot otherwise see.
-    seat_seg, seat_color = render_seat(git)
+    seat_seg, seat_color = render_seat(git, cwd)
     head = seat_seg + "  " + paint(BOLD, model)
     if effort:
         head += paint(DIM, f" · {effort}")

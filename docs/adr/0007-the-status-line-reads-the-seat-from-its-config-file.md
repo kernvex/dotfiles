@@ -1,9 +1,11 @@
 # The status line reads the Claude seat from its config file, not from `claude auth status`
 
-> **Superseded in part by ADR 0014.** The colour named below is no longer bright blue: `94`
-> and `DIM` render alike in this machine's theme, so the verified state was unreadable for as
-> long as it existed. The *meaning* fixed here — that one colour means a comparison ran and
-> passed — is unchanged and still holds; only the hue moved, to magenta.
+> **Superseded in part by ADR 0014 and ADR 0015.** The colour named below is no longer bright
+> blue: `94` and `DIM` render alike in this machine's theme, so the verified state was
+> unreadable for as long as it existed (0014). And the refusal below to read a declarative seat
+> map is narrowed by 0015: a *generated* map is read for the assignment, while what is in force
+> is still observed and compared. The meaning fixed here — that one colour means a comparison
+> ran and passed — holds throughout; only the hue and the source of the assignment moved.
 
 The status line names the Claude seat answering a session and colours it by
 whether that account agrees with the folder's git identity. Getting the account

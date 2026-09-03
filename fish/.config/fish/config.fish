@@ -75,6 +75,10 @@ end
 # machine this abbreviation simply will not exist — which is the honest outcome,
 # since there would be no declared profiles for it to route to either.
 command -v identity >/dev/null; and abbr -a o 'identity browser open'
+# Claude on the personal seat inside a work folder: changes whose subscription
+# pays, and nothing about who commits, pushes or authenticates. Per invocation —
+# the shell it runs in is left routed as the folder says.
+command -v identity >/dev/null; and abbr -a oc 'identity override claude'
 
 # bash-style history recall: !! = previous command, !$ = its last argument
 function _last_history_item

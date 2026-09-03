@@ -47,11 +47,30 @@ details, no decisions (those live in `docs/adr/`).
   `oauthAccount.emailAddress` in that seat's config file. Distinct from Keychain
   state, which is what `claude auth status` reports.
 
-- **Seat mismatch** — the seat account disagrees with the effective identity of
-  the folder you are in: a company folder answered by the wrong account, or a
-  personal folder answered by someone else's seat. The "whose subscription is
-  paying for this, and whose transcripts is it landing in?" alarm, and the
-  Claude-side counterpart of an identity mismatch.
+- **Seat mismatch** — the seat account disagrees with the seat the folder is
+  meant to use: a company folder answered by the wrong account, or a personal
+  folder answered by someone else's seat. The "whose subscription is paying for
+  this, and whose transcripts is it landing in?" alarm, and the Claude-side
+  counterpart of an identity mismatch.
+
+- **Routing map** — the machine-readable statement of what the identity tool
+  generated: each identity's work folder, and the store each routed tool is
+  pointed at. Read, never written, and never required — absent, the seat falls
+  back to comparing accounts against git. It reports what was *generated* rather
+  than what is declared, so it can never be confidently ahead of the behaviour
+  it describes.
+
+- **Override marker** — an environment variable the identity tool sets on a
+  process it launches, naming the seat that process was deliberately put on. It
+  carries intent and nothing else: which seat is live is observed, never taken
+  from here.
+
+- **Overridden seat** — the default seat answering inside a work folder that
+  routes its own, where the marker says so and the observation agrees. The same
+  verdict as a verified seat, because in both the seat answering is the intended
+  one; the word on the segment is what says which. Without the marker the very
+  same observation is a seat mismatch, and nothing on the machine can tell them
+  apart, because the difference is intent.
 
 ## Location terms
 
