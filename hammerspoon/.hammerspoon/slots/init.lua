@@ -25,6 +25,8 @@ local COMPLAINTS = {
   ambiguous_signature = "slot %d: two profiles share a name — rename one",
   nothing_focused = "slot %d: no focused window to pin",
   unidentified_browser_window = "slot %d: cannot tell which profile that Chrome window is",
+  -- "Operation not permitted" here means Hammerspoon has lost Full Disk Access.
+  registry_unreadable = "slot %d: cannot read Chrome's profile list (%s)",
 }
 
 -- What to call a target on screen. A profile is named by whatever Chrome calls it
@@ -42,9 +44,11 @@ end
 local function survey(force_profiles, deep)
   local snapshot = deep and desktop.snapshot_deep or desktop.snapshot
   local windows, focused, handles = snapshot()
+  local profiles, registry_error = chrome.profiles(force_profiles)
   return {
     slots = store.load(),
-    profiles = chrome.profiles(force_profiles),
+    profiles = profiles,
+    registry_error = registry_error,
     windows = windows,
     focused = focused,
   }, handles
@@ -56,8 +60,10 @@ end
 -- solo leaves the backdrop in, which the ordinary snapshot cannot see. The
 -- retry re-reads the registry AND sweeps deep, because acting on either
 -- mistake opens a duplicate window. Both costs stay off the focus path, where
--- they would be unaffordable on every keypress.
-local STALE_SUSPECTS = { launch = true, unknown_profile = true }
+-- they would be unaffordable on every keypress. An unreadable registry joins
+-- them: the forced re-read is what tells a mid-write collision from a fault
+-- that lasts.
+local STALE_SUSPECTS = { launch = true, unknown_profile = true, registry_unreadable = true }
 
 local function resolve_freshly(request)
   local world, handles = survey(false, false)
@@ -125,7 +131,7 @@ end
 local function complain(action, digit)
   if action.reason == "already_there" then return end
   local template = COMPLAINTS[action.reason]
-  hs.alert.show(template and template:format(digit)
+  hs.alert.show(template and template:format(digit, tostring(action.detail))
     or string.format("slot %d: %s", digit, tostring(action.reason)))
 end
 
@@ -200,6 +206,9 @@ function M.explain()
   local world = survey(true)
   local lines = { string.format("reachable windows: %d   focused: %s",
     #world.windows, tostring(world.focused)) }
+  if world.registry_error then
+    lines[#lines + 1] = "profile registry unreadable: " .. world.registry_error
+  end
   for _, w in ipairs(world.windows) do
     lines[#lines + 1] = string.format("  %-16s %-8s %s", w.app, tostring(w.id), w.title)
   end

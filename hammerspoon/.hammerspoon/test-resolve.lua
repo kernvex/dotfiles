@@ -418,6 +418,116 @@ check("pinning with nothing focused reports rather than binds",
           { slots = {}, profiles = {}, windows = {}, focused = nil }),
   { kind = "none", reason = "nothing_focused" })
 
+-- An unreadable `Local State` empties the profile table, and every Chrome window
+-- then looks unidentifiable. Observed after a macOS update withdrew Hammerspoon's
+-- file access: "cannot tell which profile" sent the diagnosis to the window
+-- title, which was fine. The registry error replaces a complaint only where a
+-- missing profile is what produced it; every other outcome stays what it was, so
+-- the error can explain a failure but never hide a different one.
+local UNREADABLE = "Operation not permitted"
+
+check("an unreadable registry, not the window, is why a Chrome pin fails",
+  resolve({ kind = "pin", slot = 2 }, {
+    slots = {},
+    profiles = {},
+    registry_error = UNREADABLE,
+    windows = { { id = 9, app = "Google Chrome", mru_rank = 1,
+                  title = "Inbox - Google Chrome - Sam (Sam Weber (Northwind))" } },
+    focused = 9,
+  }),
+  { kind = "none", reason = "registry_unreadable", detail = UNREADABLE })
+
+check("an unreadable registry does not stop pinning a non-browser window",
+  resolve({ kind = "pin", slot = 7 }, {
+    slots = {},
+    profiles = {},
+    registry_error = UNREADABLE,
+    windows = { { id = 3, app = "Telegram", mru_rank = 1, title = "Telegram" } },
+    focused = 3,
+  }),
+  { kind = "pin", slot = 7, target = { kind = "app", name = "Telegram" } })
+
+check("an unreadable registry does not replace nothing_focused",
+  resolve({ kind = "pin", slot = 2 },
+          { slots = {}, profiles = {}, registry_error = UNREADABLE,
+            windows = {}, focused = nil }),
+  { kind = "none", reason = "nothing_focused" })
+
+-- A failed re-read returns the last good table alongside the error. Where that
+-- table still answers, the answer stands: the error explains failures only.
+check("a registry error does not override profiles that still identify the window",
+  resolve({ kind = "pin", slot = 4 }, {
+    slots = {},
+    profiles = { ["Profile 72"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
+    registry_error = "could not parse Local State",
+    windows = { { id = 9, app = "Google Chrome", mru_rank = 1,
+                  title = "Inbox - Google Chrome - Sam (Sam Weber (Northwind))" } },
+    focused = 9,
+  }),
+  { kind = "pin", slot = 4, target = { kind = "profile", dir = "Profile 72" } })
+
+check("a registry error does not replace ambiguous_signature",
+  resolve({ kind = "pin", slot = 2 }, {
+    slots = {},
+    profiles = {
+      ["Profile 70"] = { name = "Shared Name", given_name = "" },
+      ["Profile 99"] = { name = "Shared Name", given_name = "" },
+    },
+    registry_error = "could not parse Local State",
+    windows = { { id = 9, app = "Google Chrome", mru_rank = 1,
+                  title = "Whose window? - Google Chrome - Shared Name" } },
+    focused = 9,
+  }),
+  { kind = "none", reason = "ambiguous_signature" })
+
+-- Without this, a jump says the profile "no longer exists", which is worse
+-- than misleading: it invites re-pinning a slot that was never broken.
+check("an unreadable registry, not a deleted profile, is why a Chrome slot fails",
+  resolve({ kind = "jump", slot = 2 }, {
+    slots = { [2] = { kind = "profile", dir = "Profile 70" } },
+    profiles = {},
+    registry_error = UNREADABLE,
+    windows = {},
+    focused = nil,
+  }),
+  { kind = "none", reason = "registry_unreadable", detail = UNREADABLE })
+
+check("an unreadable registry passes through solo undecorated",
+  resolve({ kind = "solo", slot = 2 }, {
+    slots = { [2] = { kind = "profile", dir = "Profile 70" } },
+    profiles = {},
+    registry_error = UNREADABLE,
+    windows = {},
+    focused = nil,
+  }),
+  { kind = "none", reason = "registry_unreadable", detail = UNREADABLE })
+
+check("an unreadable registry does not stop an application slot",
+  resolve({ kind = "jump", slot = 8 }, {
+    slots = { [8] = { kind = "app", name = "Slack" } },
+    profiles = {},
+    registry_error = UNREADABLE,
+    windows = {},
+    focused = nil,
+  }),
+  { kind = "activate_app", name = "Slack" })
+
+check("an unreadable registry does not replace unbound",
+  resolve({ kind = "jump", slot = 6 },
+          { slots = {}, profiles = {}, registry_error = UNREADABLE,
+            windows = {}, focused = nil }),
+  { kind = "none", reason = "unbound" })
+
+check("a registry error does not override a profile the stale table still has",
+  resolve({ kind = "jump", slot = 2 }, {
+    slots = { [2] = { kind = "profile", dir = "Profile 70" } },
+    profiles = { ["Profile 70"] = { name = "Sam Weber (Northwind)", given_name = "Sam" } },
+    registry_error = "could not parse Local State",
+    windows = {},
+    focused = nil,
+  }),
+  { kind = "launch", profile_dir = "Profile 70" })
+
 -- Resolution takes the registry as an argument rather than remembering one, so a
 -- rename between two calls simply lands. These two cases pin that property down:
 -- they are what stops anyone "optimising" the registry into module state.

@@ -41,6 +41,17 @@ local function identities_of(window, profiles)
   return found
 end
 
+-- A refusal for want of a profile. When the registry could not be read, that
+-- is the likelier cause, and naming it keeps the diagnosis off the window title
+-- and the slot table, both of which are fine. Called only where a missing
+-- profile is the reason: every other refusal already has its own explanation.
+local function unattributed(world, reason)
+  if world.registry_error then
+    return { kind = "none", reason = "registry_unreadable", detail = world.registry_error }
+  end
+  return { kind = "none", reason = reason }
+end
+
 local function pin(request, world)
   local focused
   for _, w in ipairs(world.windows) do
@@ -62,7 +73,7 @@ local function pin(request, world)
   -- target: "Google Chrome" reaches every account equally, which is the exact
   -- ambiguity slots exist to remove. Refusing is the only honest answer.
   if focused.app == BROWSER then
-    return { kind = "none", reason = "unidentified_browser_window" }
+    return unattributed(world, "unidentified_browser_window")
   end
 
   return {
@@ -92,7 +103,7 @@ local function jump(request, world)
   if profile == nil then
     -- Launching an unknown directory would make Chrome create a fresh empty
     -- profile under that name, quietly turning a stale slot into a new account.
-    return { kind = "none", reason = "unknown_profile" }
+    return unattributed(world, "unknown_profile")
   end
 
   local signature = M.signature(profile)

@@ -14,6 +14,12 @@ slot found no window, where being wrong means opening a duplicate — and where 
 50 ms disappears beside the cost of launching a browser window anyway. That also
 covers mtime's one-second granularity, which could otherwise hide a rename made
 in the same second as the previous read.
+
+A failed read returns its reason as a second value. Nothing downstream can tell
+an empty table from "Chrome has no profiles", so without it an unreadable file
+surfaced as "cannot tell which profile that Chrome window is", a diagnosis
+pointing at the window title. That happened when a macOS update withdrew
+Hammerspoon's access to this file (stat still works; open does not).
 ]]
 
 local M = {}
@@ -23,18 +29,27 @@ local LOCAL_STATE = os.getenv("HOME")
 
 local cache = { mtime = nil, profiles = {} }
 
+-- The profiles, and why they could not be read (nil when they were). An
+-- unopenable file yields no table, because a stale one would hide a lasting
+-- fault; an unparseable one still yields the last good table, because Chrome
+-- rewrites the file in place and a read can land mid-write.
 function M.profiles(force)
   local mtime = hs.fs.attributes(LOCAL_STATE, "modification")
-  if mtime == nil then return {} end
+  if mtime == nil then return {}, "Local State not found" end
   if mtime == cache.mtime and not force then return cache.profiles end
 
-  local file = io.open(LOCAL_STATE, "r")
-  if file == nil then return {} end
+  local file, err = io.open(LOCAL_STATE, "r")
+  if file == nil then
+    -- io.open prefixes the path, which is known and would crowd the alert.
+    return {}, (tostring(err):gsub("^.*Local State: ", ""))
+  end
   local raw = file:read("a")
   file:close()
 
   local ok, decoded = pcall(hs.json.decode, raw)
-  if not ok or type(decoded) ~= "table" then return cache.profiles end
+  if not ok or type(decoded) ~= "table" then
+    return cache.profiles, "could not parse Local State"
+  end
 
   local info = decoded.profile and decoded.profile.info_cache or {}
   local profiles = {}
