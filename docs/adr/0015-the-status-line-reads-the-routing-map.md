@@ -48,12 +48,22 @@ believed because a file said so.
 
 ## The marker, and why three conditions
 
-`IDENTITY_SEAT_OVERRIDE` carries intent only. The word `OVERRIDDEN` appears only
-when the marker is set **and** the seat in use is the default one **and** the
-folder routes a different seat. Any one of those failing removes the word rather
-than making it false — so a marker that outlives what it describes goes quiet
-instead of lying. A claim believed on its own would eventually assert an override
-that is not in force, which is 0007's stale green light by another route.
+`IDENTITY_SEAT_OVERRIDE` carries intent only. The badge appears only when the
+marker is set **and** the seat in use is the one the map assigns to the folder
+**and** the session's payer variable (`CLAUDE_CODE_OAUTH_TOKEN`) is present in
+the status line's own environment. Any one of those failing removes the badge
+rather than making it false — so a marker that outlives what it describes goes
+quiet instead of lying. A claim believed on its own would eventually assert an
+override that is not in force, which is 0007's stale green light by another
+route.
+
+> **Amended 2026-10-05**, with identity's ADR 0013. Until then an override moved
+> the seat, the second condition read "the seat in use is the default one", and
+> the badge said `OVERRIDDEN`. Now the override keeps the folder's seat and sets
+> only the payer, so the default seat inside a folder that routes its own is a
+> fault whatever the marker says, and the badge reads `PERSONAL PAYS` — the one
+> fact the seat itself cannot show. The payer variable's name is the identity
+> registry's and is carried here by hand until the routing map names it.
 
 ## Consequences
 

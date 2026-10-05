@@ -132,21 +132,25 @@ PAYLOAD = json.dumps({
 ABSENT_MAP = os.path.join(HERE, "no-such-routing-map.json")
 
 
-def render(cwd, config_dir, map_path, marker=None):
+def render(cwd, config_dir, map_path, marker=None, payer=False):
     """Run the status line as Claude Code does; return (ansi code, seat label).
 
     A payload on stdin, a working directory, an environment — the real process
-    boundary. Every row in this file goes through here; the map path and the
-    marker are the only things that vary.
+    boundary. Every row in this file goes through here; the map path, the
+    marker and the payer variable are the only things that vary. The payer's
+    VALUE is a placeholder: the segment reads presence, never content.
     """
     env = dict(os.environ)
     env.pop("CLAUDE_CONFIG_DIR", None)
     env.pop("IDENTITY_SEAT_OVERRIDE", None)
+    env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
     env["STATUSLINE_IDENTITY_MAP"] = map_path
     if config_dir is not None:
         env["CLAUDE_CONFIG_DIR"] = config_dir
     if marker is not None:
         env["IDENTITY_SEAT_OVERRIDE"] = marker
+    if payer:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = "not-a-real-token"
     payload = json.loads(PAYLOAD)
     payload["workspace"]["current_dir"] = cwd
 
@@ -371,29 +375,40 @@ def main():
         map_none = make_map(tmp, "none", work, no_account, noseat,
                             "person@a-company.invalid")
 
+        repo = os.path.join(work, "a-repo")
         rows = [
-            # label, cwd, seat, marker, expected state, expect the word
-            ("work ROOT + assigned seat   ", work, assigned, None, "verified", False),
-            ("work repo + assigned seat   ", os.path.join(work, "a-repo"), assigned, None, "verified", False),
-            ("work ROOT + default + marker", work, None, "owner", "overridden", True),
-            ("work repo + default + marker", os.path.join(work, "a-repo"), None, "owner", "overridden", True),
-            ("work ROOT + default, no mark", work, None, None, "mismatch", False),
-            ("work ROOT + WRONG marker    ", work, None, "not-a-slug", "mismatch", False),
-            ("no-seat folder + default    ", os.path.join(noseat, "b-repo"), None, None, "verified", False),
-            ("no-seat folder + other seat ", os.path.join(noseat, "b-repo"), foreign, None, "mismatch", False),
+            # label, cwd, seat, marker, payer var set, expected state, expect the badge
+            ("work ROOT + assigned seat        ", work, assigned, None, False, "verified", False),
+            ("work repo + assigned seat        ", repo, assigned, None, False, "verified", False),
+            # An override since identity's ADR-0013: the folder's seat, the marker,
+            # and the payer variable beside it. The badge needs all three.
+            ("work repo + assigned + marker + payer", repo, assigned, "owner", True, "overridden", True),
+            ("work ROOT + assigned + marker + payer", work, assigned, "owner", True, "overridden", True),
+            # A marker that outlived its process, and an exported token with no
+            # intent behind it: each alone is the plain verified seat, no badge.
+            ("work repo + assigned + marker only ", repo, assigned, "owner", False, "verified", False),
+            ("work repo + assigned + payer only  ", repo, assigned, None, True, "verified", False),
+            ("work repo + assigned + WRONG marker", repo, assigned, "not-a-slug", True, "verified", False),
+            # What an override USED to look like. The default seat inside a folder
+            # that routes its own is now a fault whatever the marker says.
+            ("work ROOT + default + marker     ", work, None, "owner", False, "mismatch", False),
+            ("work repo + default + marker+pay ", repo, None, "owner", True, "mismatch", False),
+            ("work ROOT + default, no mark     ", work, None, None, False, "mismatch", False),
+            ("no-seat folder + default         ", os.path.join(noseat, "b-repo"), None, None, False, "verified", False),
+            ("no-seat folder + other seat      ", os.path.join(noseat, "b-repo"), foreign, None, False, "mismatch", False),
             # The folder routes the default store, so nothing is displaced and a
             # marker must not manufacture a badge.
-            ("folder assigns default store", samestore, None, "owner", "verified", False),
+            ("folder assigns default store     ", samestore, None, "owner", True, "verified", False),
         ]
-        for label, cwd, seat, marker, state, want_word in rows:
+        for label, cwd, seat, marker, payer, state, want_word in rows:
             expected = colour_of(state)
-            got, seg = render(cwd, seat, map_path, marker)
+            got, seg = render(cwd, seat, map_path, marker, payer)
             ran += 1
-            has_word = "OVERRIDDEN" in (seg or "")
+            has_word = "PERSONAL PAYS" in (seg or "")
             ok = got == expected and has_word == want_word
             print(f"  {'ok  ' if ok else 'FAIL'}  {label}  expected {state:<12} "
                   f"got {CODE_NAMES.get(got, repr(got)).lower()}"
-                  f"{'  +OVERRIDDEN' if has_word else ''}")
+                  f"{'  +PERSONAL PAYS' if has_word else ''}")
             if not ok:
                 failures.append(label.strip())
 

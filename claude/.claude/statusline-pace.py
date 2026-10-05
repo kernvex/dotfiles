@@ -261,11 +261,12 @@ CLAIM_UNCHECKABLE = "I cannot check, and the seat is not the default"
 CLAIM_NOTHING = "nothing to say"
 
 SEAT_STATES = {
-    # `verified` and `overridden` make the same claim — reached by routing in the
-    # first case and by declaration in the second — so they share a colour, and
-    # the badge is what tells them apart.
+    # `verified` and `overridden` make the same claim about who ACTS — the seat
+    # is the folder's in both — so they share a colour, and the badge says the
+    # one thing the second adds: whose subscription the session was deliberately
+    # put on. The slug is the marker's; "personal" is the only one there is.
     "verified":     {"colour": MAGENTA, "badge": None, "asserts": CLAIM_INTENDED},
-    "overridden":   {"colour": MAGENTA, "badge": "OVERRIDDEN", "asserts": CLAIM_INTENDED},
+    "overridden":   {"colour": MAGENTA, "badge": "PERSONAL PAYS", "asserts": CLAIM_INTENDED},
     "mismatch":     {"colour": RED, "badge": None, "asserts": CLAIM_WRONG},
     "unverifiable": {"colour": YELLOW, "badge": None, "asserts": CLAIM_UNCHECKABLE},
     "neutral":      {"colour": DIM, "badge": None, "asserts": CLAIM_NOTHING},
@@ -340,6 +341,16 @@ IDENTITY_MAP = os.environ.get("STATUSLINE_IDENTITY_MAP") or \
 # Set by `identity override <tool>` on the process it execs. It carries INTENT
 # and nothing else — which seat is live is observed below, never taken from here.
 OVERRIDE_MARKER = "IDENTITY_SEAT_OVERRIDE"
+
+# What the override sets BESIDE the marker, since identity's ADR-0013: the seat
+# stays the folder's, and this variable — Claude Code's own, ranking above the
+# seat's stored login — carries the personal subscription's token. It is the
+# observation that pairs with the marker: the token cannot say whose it is, so a
+# marker alone is a claim, a token alone is someone's exported variable, and only
+# the two together are an override. The name is the identity registry's (field
+# 14); it is not in the routing map yet, so the one tool this segment reports
+# carries the one name here.
+PAYER_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 
 
 def routing_map():
@@ -425,12 +436,11 @@ def folder_seat_state(config_dir, is_default, seat_email, ident, mapping):
     if is_default:
         if not displaces:
             return "verified"
-        # The personal seat inside a folder that routes its own. Deliberate or a
-        # fault — the same observation either way, so only the marker separates
-        # them, and it is believed only while it agrees with what is observed.
-        declared = os.environ.get(OVERRIDE_MARKER)
-        if declared and declared == personal_slug(mapping):
-            return "overridden"
+        # The personal seat inside a folder that routes its own. Until identity's
+        # ADR-0013 an override looked exactly like this and the marker was what
+        # separated the two; now an override keeps the folder's seat, so this is
+        # a routing fault whatever the marker says, and a marker that still
+        # claims otherwise has outlived the mechanism it described.
         return "mismatch"
 
     if assigned_dir != os.path.realpath(config_dir):
@@ -443,7 +453,19 @@ def folder_seat_state(config_dir, is_default, seat_email, ident, mapping):
     expected = (ident or {}).get("email")
     if not seat_email or not expected:
         return "unverifiable"
-    return "verified" if seat_email.casefold() == expected.casefold() else "mismatch"
+    if seat_email.casefold() != expected.casefold():
+        return "mismatch"
+
+    # The right seat, signed into the right account. Whether it is also the one
+    # PAYING is the one thing the seat cannot say: an override keeps this seat
+    # and sets the payer variable beside the marker. Both, and only both — the
+    # marker without the variable has outlived its process, and the variable
+    # without the marker is someone's exported token, which identity's own
+    # `check` reports as the hazard it is.
+    declared = os.environ.get(OVERRIDE_MARKER)
+    if declared and declared == personal_slug(mapping) and os.environ.get(PAYER_VAR):
+        return "overridden"
+    return "verified"
 
 
 def seat_state(is_default, seat_email, git):
