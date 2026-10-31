@@ -125,11 +125,12 @@ Rationale in [`docs/adr/0005-teach-lessons-go-fullscreen-without-forking-the-ski
 ## Claude global rules
 
 `claude/.claude/CLAUDE.md` → `~/.claude/CLAUDE.md` is read at the start of every
-Claude Code session, in every project. It currently carries three rules.
+Claude Code session, in every project. It currently carries four rules.
 
 | Section | Rule |
 |---|---|
 | Teaching workspaces | Lessons and reference pages load `assets/fullscreen.js` (see above) |
+| Opening things in my browser | URLs and HTML pages Claude opens go through `identity browser open`, landing in the browser identity of the folder that owns them; Safari stays the default for stray links |
 | Arabic-script text in HTML | Any page containing U+0600–U+06FF uses `"Vazirmatn", "Geeza Pro", system-ui, sans-serif`, with the font self-hosted beside the page. Never a CDN, never Roboto |
 | Text I will send as myself | Drafts meant to be sent onward (email, messages, posts) avoid em-dashes and the other tells that mark text as machine-written |
 
@@ -143,7 +144,7 @@ no script reads it, no build step enforces it. **Delete the section** and the ru
 stops applying to future work. Changes take effect in the next session, not the
 running one.
 
-Two of the three leave artifacts behind, which the deletion does not touch:
+Two of the four leave artifacts behind, which the deletion does not touch:
 
 - **Fullscreen** — pages keep their `<script>` tag and keep working. To unwind
   properly, remove the tag and `assets/fullscreen.js` from each workspace, then
@@ -154,6 +155,8 @@ Two of the three leave artifacts behind, which the deletion does not touch:
   alone: Vazirmatn is installed system-wide, so pages still render correctly *here*
   while quietly losing portability. See the reversal note in
   [`docs/adr/0006-persian-html-ships-its-own-font.md`](docs/adr/0006-persian-html-ships-its-own-font.md).
+- **Browser routing** — nothing to clean up. It only ever chose where a link
+  opened.
 - **AI tells** — nothing to clean up. It only ever shaped text that was not yet
   written.
 
